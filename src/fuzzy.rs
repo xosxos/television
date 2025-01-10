@@ -1,0 +1,307 @@
+use std::ops::DerefMut;
+use std::sync::Arc;
+
+// use nucleo::Matcher;
+use parking_lot::Mutex;
+
+const MATCHER_TICK_TIMEOUT: u64 = 2;
+
+/// The status of the fuzzy matcher.
+///
+/// This currently only contains a boolean indicating whether the matcher is
+/// running in the background.
+/// This mostly serves as a way to communicate the status of the matcher to the
+/// front-end and display a loading indicator.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct Status {
+    /// Whether the matcher is currently running.
+    pub running: bool,
+}
+
+impl From<nucleo::Status> for Status {
+    fn from(status: nucleo::Status) -> Self {
+        Self {
+            running: status.running,
+        }
+    }
+}
+
+/// This is a wrapper around the `Nucleo` fuzzy matcher that only matches
+/// on a single dimension.
+///
+/// The matcher can be used to find items that match a given pattern and to
+/// retrieve the matched items as well as the indices of the matched characters.
+pub struct Matcher<I>
+where
+    I: Sync + Send + Clone + 'static,
+{
+    /// The inner `Nucleo` fuzzy matcher.
+    inner: nucleo::Nucleo<I>,
+    /// The current total number of items in the matcher.
+    pub total_item_count: u32,
+    /// The current number of matched items in the matcher.
+    pub matched_item_count: u32,
+    /// The current status of the matcher.
+    pub status: Status,
+    /// The last pattern that was matched against.
+    pub last_pattern: String,
+}
+
+impl<I> Matcher<I>
+where
+    I: Sync + Send + Clone + 'static,
+{
+    /// Create a new fuzzy matcher with the given configuration.
+    pub fn new(config: Config) -> Self {
+        Self {
+            inner: nucleo::Nucleo::new((&config).into(), Arc::new(|| {}), config.n_threads, 1),
+            total_item_count: 0,
+            matched_item_count: 0,
+            status: Status::default(),
+            last_pattern: String::new(),
+        }
+    }
+
+    /// Tick the fuzzy matcher.
+    ///
+    /// This should be called periodically to update the state of the matcher.
+    pub fn tick(&mut self) {
+        self.status = self.inner.tick(MATCHER_TICK_TIMEOUT).into();
+    }
+
+    /// Get an injector that can be used to push items into the fuzzy matcher.
+    ///
+    /// This can be used at any time to push items into the fuzzy matcher.
+    ///
+    pub fn injector(&self) -> Injector<I> {
+        Injector::new(self.inner.injector())
+    }
+
+    /// Find items that match the given pattern.
+    ///
+    /// This should be called whenever the pattern changes.
+    /// The `Matcher` will keep track of the last pattern and only reparse the
+    /// pattern if it has changed, allowing for more efficient matching when
+    /// `self.last_pattern` is a prefix of the new `pattern`.
+    pub fn find(&mut self, pattern: &str) {
+        if pattern != self.last_pattern {
+            self.inner.pattern.reparse(
+                0,
+                pattern,
+                nucleo::pattern::CaseMatching::Smart,
+                nucleo::pattern::Normalization::Smart,
+                pattern.starts_with(&self.last_pattern),
+            );
+            self.last_pattern = pattern.to_string();
+        }
+    }
+
+    /// Get the matched items.
+    ///
+    /// This should be called to retrieve the matched items after calling
+    /// `find`.
+    ///
+    /// The `num_entries` parameter specifies the number of entries to return,
+    /// and the `offset` parameter specifies the offset of the first entry to
+    /// return.
+    ///
+    /// The returned items are `MatchedItem`s that contain the matched item, the
+    /// dimension against which it was matched, represented as a string, and the
+    /// indices of the matched characters.
+    ///
+    pub fn results(&mut self, num_entries: u32, offset: u32) -> Vec<MatchedItem<I>> {
+        let snapshot = self.inner.snapshot();
+        self.total_item_count = snapshot.item_count();
+        self.matched_item_count = snapshot.matched_item_count();
+
+        let mut col_indices = Vec::new();
+        let mut matcher = MATCHER.lock();
+
+        snapshot
+            .matched_items(offset..(num_entries + offset).min(self.matched_item_count))
+            .map(move |item| {
+                snapshot.pattern().column_pattern(0).indices(
+                    item.matcher_columns[0].slice(..),
+                    &mut matcher,
+                    &mut col_indices,
+                );
+                col_indices.sort_unstable();
+                col_indices.dedup();
+
+                let indices = col_indices.drain(..);
+
+                let matched_string = item.matcher_columns[0].to_string();
+                MatchedItem {
+                    inner: item.data.clone(),
+                    matched_string,
+                    match_indices: indices.map(|i| (i, i + 1)).collect(),
+                }
+            })
+            .collect()
+    }
+
+    /// Get a single matched item.
+    pub fn get_result(&self, index: u32) -> Option<MatchedItem<I>> {
+        let snapshot = self.inner.snapshot();
+        snapshot.get_matched_item(index).map(|item| {
+            let matched_string = item.matcher_columns[0].to_string();
+            MatchedItem {
+                inner: item.data.clone(),
+                matched_string,
+                match_indices: Vec::new(),
+            }
+        })
+    }
+}
+
+/// A matched item.
+///
+/// This contains the matched item, the dimension against which it was matched,
+/// represented as a string, and the indices of the matched characters.
+///
+/// The indices are pairs of `(start, end)` where `start` is the index of the
+/// first character in the match, and `end` is the index of the character after
+/// the last character in the match.
+#[derive(Debug, Clone)]
+pub struct MatchedItem<I>
+where
+    I: Sync + Send + Clone + 'static,
+{
+    /// The matched item.
+    pub inner: I,
+    /// The dimension against which the item was matched (as a string).
+    pub matched_string: String,
+    /// The indices of the matched characters.
+    pub match_indices: Vec<(u32, u32)>,
+}
+
+/// This is a wrapper around the `Injector` type from the `Nucleo` fuzzy matcher.
+///
+/// The `push` method takes an item of type `I` and a closure that produces the
+/// string to match against based on the item.
+#[derive(Clone)]
+pub struct Injector<I>
+where
+    I: Sync + Send + Clone + 'static,
+{
+    /// The inner `Injector` from the `Nucleo` fuzzy matcher.
+    inner: nucleo::Injector<I>,
+}
+
+impl<I> Injector<I>
+where
+    I: Sync + Send + Clone + 'static,
+{
+    pub fn new(inner: nucleo::Injector<I>) -> Self {
+        Self { inner }
+    }
+
+    /// Push an item into the fuzzy matcher.
+    ///
+    /// The closure `f` should produce the string to match against based on the
+    /// item.
+    ///
+    pub fn push<F>(&self, item: I, f: F)
+    where
+        F: FnOnce(&I, &mut [nucleo::Utf32String]),
+    {
+        self.inner.push(item, f);
+    }
+}
+
+/// A lazy-initialized mutex.
+///
+/// This is used to lazily initialize a nucleo matcher (which pre-allocates
+/// quite a bit of memory upfront which can be expensive during initialization).
+///
+pub struct LazyMutex<T> {
+    /// The inner value, wrapped in a mutex.
+    inner: Mutex<Option<T>>,
+    /// The initialization function.
+    init: fn() -> T,
+}
+
+impl<T> LazyMutex<T> {
+    pub const fn new(init: fn() -> T) -> Self {
+        Self {
+            inner: Mutex::new(None),
+            init,
+        }
+    }
+
+    /// Locks the mutex and returns a guard that allows mutable access to the
+    /// inner value.
+    pub fn lock(&self) -> impl DerefMut<Target = T> + '_ {
+        parking_lot::MutexGuard::map(self.inner.lock(), |val| val.get_or_insert_with(self.init))
+    }
+}
+
+/// A lazy-initialized nucleo matcher used for conveniently computing match indices.
+///
+/// This is used to lazily initialize a nucleo matcher (which pre-allocates quite a bit of memory
+/// upfront which can be expensive at initialization).
+///
+/// This matcher is used as a convenience for computing match indices on a subset of matched items.
+///
+pub static MATCHER: LazyMutex<nucleo::Matcher> = LazyMutex::new(nucleo::Matcher::default);
+
+#[derive(Copy, Clone, Debug)]
+pub struct Config {
+    /// The number of threads to use for the fuzzy matcher.
+    pub n_threads: Option<usize>,
+    /// Whether to ignore case when matching.
+    pub ignore_case: bool,
+    /// Whether to prefer prefix matches.
+    pub prefer_prefix: bool,
+    /// Whether to optimize for matching paths.
+    pub match_paths: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            n_threads: None,
+            ignore_case: true,
+            prefer_prefix: false,
+            match_paths: false,
+        }
+    }
+}
+
+impl Config {
+    /// Set the number of threads to use.
+    pub fn n_threads(mut self, n_threads: usize) -> Self {
+        self.n_threads = Some(n_threads);
+        self
+    }
+
+    /// Set whether to ignore case.
+    pub fn ignore_case(mut self, ignore_case: bool) -> Self {
+        self.ignore_case = ignore_case;
+        self
+    }
+
+    /// Set whether to prefer prefix matches.
+    pub fn prefer_prefix(mut self, prefer_prefix: bool) -> Self {
+        self.prefer_prefix = prefer_prefix;
+        self
+    }
+
+    /// Set whether to optimize for matching paths.
+    pub fn match_paths(mut self, match_paths: bool) -> Self {
+        self.match_paths = match_paths;
+        self
+    }
+}
+
+impl From<&Config> for nucleo::Config {
+    fn from(config: &Config) -> Self {
+        let mut matcher_config = nucleo::Config::DEFAULT;
+        matcher_config.ignore_case = config.ignore_case;
+        matcher_config.prefer_prefix = config.prefer_prefix;
+        if config.match_paths {
+            matcher_config = matcher_config.match_paths();
+        }
+        matcher_config
+    }
+}
