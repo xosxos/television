@@ -134,23 +134,26 @@ impl Channel {
         }
     }
 }
-
 #[allow(clippy::unused_async)]
 async fn load_candidates(command: String, injector: Injector<String>) {
     debug!("Loading candidates from command: {:?}", command);
-    let output = shell_command()
+    let mut child = shell_command()
         .arg(command)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("failed to execute process");
 
-    let decoded_output = String::from_utf8_lossy(&output.stdout);
-    debug!("Decoded output: {:?}", decoded_output);
+    if let Some(out) = child.stdout.take() {
+        let reader = BufReader::new(out);
 
-    for line in decoded_output.lines() {
-        if !line.trim().is_empty() {
-            let () = injector.push(line.to_string(), |e, cols| {
-                cols[0] = e.clone().into();
-            });
+        for line in reader.lines() {
+            let line = line.unwrap();
+            if !line.trim().is_empty() {
+                let () = injector.push(line, |e, cols| {
+                    cols[0] = e.clone().into();
+                });
+            }
         }
     }
 }
