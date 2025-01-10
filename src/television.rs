@@ -496,14 +496,9 @@ impl Television {
         );
 
         // Logs
-        draw_logs_bar(
-            f,
-            &layout.logs,
-            &self.colorscheme,
-        );
+        draw_logs_bar(f, &layout.logs, &self.colorscheme);
 
-        self.results_area_height =
-            u32::from(layout.results.height.saturating_sub(2)); // 2 for the borders
+        self.results_area_height = u32::from(layout.results.height.saturating_sub(2)); // 2 for the borders
 
         self.preview_pane_height = match layout.preview_window {
             Some(preview) => preview.height,
@@ -524,7 +519,7 @@ impl Television {
 
         draw_results_list(
             f,
-            layout.results,
+            layout.results.results,
             &entries,
             self.channel.selected_entries(),
             &mut self.results_picker.relative_state,
@@ -555,7 +550,7 @@ impl Television {
         // input box
         draw_input_box(
             f,
-            layout.input,
+            layout.results.input,
             result_count,
             self.channel.total_count(),
             &mut self.results_picker.input,
