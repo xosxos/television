@@ -14,12 +14,13 @@ use crate::entry::Entry;
 use crate::screen::colors::{Colorscheme, GeneralColorscheme};
 use crate::screen::mode::{mode_color, Mode};
 use crate::screen::results::build_results_list;
+use crate::layout::RemoteControlLayout;
 use crate::utils::input::Input;
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_remote_control(
     f: &mut Frame,
-    rect: Rect,
+    layout: RemoteControlLayout,
     entries: &[Entry],
     use_nerd_font_icons: bool,
     picker_state: &mut ListState,
@@ -28,21 +29,16 @@ pub fn draw_remote_control(
     mode: &Mode,
     colorscheme: &Colorscheme,
 ) -> Result<()> {
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(3), Constraint::Max(3)].as_ref())
-        .split(rect);
-
     draw_rc_channels(
         f,
-        layout[0],
+        layout.top,
         entries,
         use_nerd_font_icons,
         picker_state,
         icon_color_cache,
         colorscheme,
     );
-    draw_rc_input(f, layout[1], input_state, colorscheme)?;
+    draw_rc_input(f, layout.bottom, input_state, colorscheme)?;
     Ok(())
 }
 
