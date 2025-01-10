@@ -71,6 +71,10 @@ pub struct Cli {
     #[arg(short, long, value_name = "FLOAT")]
     pub frame_rate: Option<f64>,
 
+    /// Disable the preview pane
+    #[arg(long, default_value = "false")]
+    pub no_preview: bool,
+
     /// Passthrough keybindings (comma separated, e.g. "q,ctrl-w,ctrl-t") These keybindings will
     /// trigger selection of the current entry and be passed through to stdout along with the entry
     /// to be handled by the parent process.
@@ -165,6 +169,10 @@ async fn main() -> Result<()> {
 
     config.config.frame_rate =
         args.frame_rate.unwrap_or(config.config.frame_rate);
+
+    if args.no_preview {
+        config.ui.show_preview_panel = false;
+    }
 
     if let Some(working_directory) = args.working_directory {
         let path = Path::new(&working_directory);
