@@ -10,28 +10,6 @@ use crate::screen::metadata::build_metadata_table;
 use crate::screen::mode::{mode_color, Mode};
 use crate::utils::AppMetadata;
 
-pub fn draw_logo_block(
-    f: &mut Frame,
-    area: Rect,
-    mode_color: Color,
-    general_colorscheme: &GeneralColorscheme,
-) {
-    let logo_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(general_colorscheme.border_fg))
-        .style(
-            Style::default()
-                .fg(mode_color)
-                .bg(general_colorscheme.background.unwrap_or_default()),
-        )
-        .padding(Padding::horizontal(1));
-
-    let logo_paragraph = build_logo_paragraph().block(logo_block);
-
-    f.render_widget(logo_paragraph, area);
-}
-
 fn draw_metadata_block(
     f: &mut Frame,
     area: Rect,
@@ -90,11 +68,5 @@ pub fn draw_help_bar(
             colorscheme,
         );
         draw_keymaps_block(f, help_bar.middle, keymap_table, &colorscheme.general);
-        draw_logo_block(
-            f,
-            help_bar.right,
-            mode_color(mode, &colorscheme.mode),
-            &colorscheme.general,
-        );
     }
 }

@@ -30,15 +30,9 @@ pub fn draw_remote_control(
 ) -> Result<()> {
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Min(3),
-                Constraint::Length(3),
-                Constraint::Length(20),
-            ]
-            .as_ref(),
-        )
+        .constraints([Constraint::Fill(3), Constraint::Max(3)].as_ref())
         .split(rect);
+
     draw_rc_channels(
         f,
         layout[0],
@@ -49,12 +43,6 @@ pub fn draw_remote_control(
         colorscheme,
     );
     draw_rc_input(f, layout[1], input_state, colorscheme)?;
-    draw_rc_logo(
-        f,
-        layout[2],
-        mode_color(*mode, &colorscheme.mode),
-        &colorscheme.general,
-    );
     Ok(())
 }
 
@@ -148,17 +136,4 @@ fn draw_rc_input(
         inner_input_chunks[1].y,
     ));
     Ok(())
-}
-fn draw_rc_logo(f: &mut Frame, area: Rect, mode_color: Color, colorscheme: &GeneralColorscheme) {
-    let logo_block = Block::default().style(
-        Style::default()
-            .fg(mode_color)
-            .bg(colorscheme.background.unwrap_or_default()),
-    );
-
-    let logo_paragraph = build_remote_logo_paragraph()
-        .alignment(Alignment::Center)
-        .block(logo_block);
-
-    f.render_widget(logo_paragraph, area);
 }
