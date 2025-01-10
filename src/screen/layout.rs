@@ -4,6 +4,10 @@ use ratatui::layout;
 use ratatui::layout::{Constraint, Direction, Rect};
 use serde::Deserialize;
 
+// UI size
+const UI_WIDTH_PERCENT: u16 = 95;
+const UI_HEIGHT_PERCENT: u16 = 95;
+
 pub struct Dimensions {
     pub x: u16,
     pub y: u16,
@@ -28,32 +32,82 @@ impl Default for Dimensions {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct HelpBarLayout {
-    pub left: Rect,
-    pub middle: Rect,
-    pub right: Rect,
+pub struct ResultsLayout {
+    pub input: Rect,
+    pub results: Rect,
 }
 
-impl HelpBarLayout {
-    pub fn new(left: Rect, middle: Rect, right: Rect) -> Self {
-        Self {
-            left,
-            middle,
-            right,
+impl ResultsLayout {
+    pub fn new(area: Rect, input_position: InputPosition) -> Self {
+        let constraints = vec![Constraint::Min(3), Constraint::Length(3)];
+        
+        let chunks = layout::Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(match input_position {
+                InputPosition::Top => constraints.into_iter().rev().collect(),
+                InputPosition::Bottom => constraints,
+            })
+            .split(area);
+
+        let (input, results) = match input_position {
+            InputPosition::Bottom => (chunks[1], chunks[0]),
+            InputPosition::Top => (chunks[0], chunks[1]),
+        };
+        
+        Self { 
+            input,
+            results,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct LogsLayout {
-    pub area: Rect,
+pub struct HelpBarLayout {
+    pub left: Rect,
+    pub right: Rect,
 }
 
-impl LogsLayout {
+impl HelpBarLayout {
     pub fn new(area: Rect) -> Self {
-        Self { area }
+        let chunks = layout::Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                // metadata
+                Constraint::Fill(1),
+                // keymaps
+                Constraint::Fill(1),
+        ])
+        .split(area);
+                
+        Self {
+            left: chunks[0],
+            right: chunks[1],
+        }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteControlLayout {
+    pub top: Rect,
+    pub bottom: Rect,
+}
+
+impl RemoteControlLayout {
+    pub fn new(area: Rect) -> Self {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Max(3),
+            ])
+            .split(rect);
+        
+        Self {
+            top: chunks[0],
+            bottom: chunks[1],
+        }
+    }
+
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
 pub enum InputPosition {
@@ -93,22 +147,20 @@ impl Display for PreviewTitlePosition {
 
 pub struct Layout {
     pub help_bar: Option<HelpBarLayout>,
-    pub logs: Option<LogsLayout>,
-    pub results: Rect,
-    pub input: Rect,
+    pub logs: Option<Rect>,
+    pub results: ResultsLayout,
     pub preview_window: Option<Rect>,
-    pub remote_control: Option<Rect>,
+    pub remote_control: Option<RemoteControlLayout>,
 }
 
 impl Layout {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         help_bar: Option<HelpBarLayout>,
-        logs: Option<LogsLayout>,
-        results: Rect,
-        input: Rect,
+        logs: Option<Rect>,
+        results: ResultsLayout,
         preview_window: Option<Rect>,
-        remote_control: Option<Rect>,
+        remote_control: Option<RemoteControlLayout>,
     ) -> Self {
         Self {
             help_bar,
@@ -119,156 +171,100 @@ impl Layout {
             remote_control,
         }
     }
-
+    
+    #[rustfmt::skip]
     pub fn build(
         dimensions: &Dimensions,
         area: Rect,
         with_remote: bool,
-        with_help_bar: bool,
+        with_help: bool,
         with_logs: bool,
         with_preview: bool,
         input_position: InputPosition,
     ) -> Self {
-        let main_block = centered_rect(dimensions.x, dimensions.y, area);
-        // split the main block into two vertical chunks (help bar + rest)
-        let main_rect: Rect;
-        let mut help_bar_layout = None;
-        let mut logs_layout = None;
+        let area = centered_rect(dimensions.x, dimensions.y, area);
+        
+        let main_section: Rect;
+        let results: ResultsLayout;
+        
+        let mut help = None;
+        let mut logs = None;
+        let mut preview = None;
+        let mut remote = None;
 
-        if with_logs && with_help_bar {
-            // split the help bar into three horizontal chunks (left + center + right)
-            let chunks = layout::Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    // help
-                    Constraint::Max(9),
-                    // main_view
-                    Constraint::Fill(1),
-                    // logs
-                    Constraint::Max(13),
-                ])
-                .split(main_block);
-
+        let new_layout = |area, constraints, direction| {
+            layout::Layout::default()
+                .direction(direction)
+                .constraints(constraints)
+                .split(area)
+        };
+        
+        // Helper windows : Help - Main Block - Logs
+        if with_logs && with_help {
+            let constraints = [Constraint::Max(9), Constraint::Fill(1), Constraint::Max(13)];
+            let chunks = new_layout(area, constraints, Direction::Vertical); 
+            
             let (top, middle, bottom) = (chunks[0], chunks[1], chunks[2]);
-
-            main_rect = middle;
-
-            // split the help bar into three horizontal chunks (left + center + right)
-            let help_bar_chunks = layout::Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    // metadata
-                    Constraint::Fill(1),
-                    // keymaps
-                    Constraint::Fill(1),
-                    // logo
-                    Constraint::Length(24),
-                ])
-                .split(top);
-
-            help_bar_layout = Some(HelpBarLayout {
-                left: help_bar_chunks[0],
-                middle: help_bar_chunks[1],
-                right: help_bar_chunks[2],
-            });
-
-            logs_layout = Some(LogsLayout { area: bottom });
-        } else if with_help_bar {
-            let hz_chunks = layout::Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Max(9), Constraint::Fill(1)])
-                .split(main_block);
-
-            main_rect = hz_chunks[1];
-
-            // split the help bar into three horizontal chunks (left + center + right)
-            let help_bar_chunks = layout::Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    // metadata
-                    Constraint::Fill(1),
-                    // keymaps
-                    Constraint::Fill(1),
-                    // logo
-                    Constraint::Length(24),
-                ])
-                .split(hz_chunks[0]);
-
-            help_bar_layout = Some(HelpBarLayout {
-                left: help_bar_chunks[0],
-                middle: help_bar_chunks[1],
-                right: help_bar_chunks[2],
-            });
+            
+            help = Some(HelpBarLayout::new(top));
+            main_section = middle;
+            logs = Some(bottom);
+        } else if with_help {
+            let constraints = [Constraint::Max(9), Constraint::Fill(1)];
+            let chunks = new_layout(area, constraints, Direction::Vertical); 
+            
+            let (top, middle) = (chunks[0], chunks[1]);
+        
+            help = Some(HelpBarLayout::new(top));
+            main_section = middle;
         } else if with_logs {
-            let hz_chunks = layout::Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Max(15), Constraint::Fill(1)])
-                .split(main_block);
-            main_rect = hz_chunks[0];
-
-            logs_layout = Some(LogsLayout { area: hz_chunks[1] });
+            let constraints = [Constraint::Max(15), Constraint::Fill(1)];
+            let chunks = new_layout(area, constraints, Direction::Vertical); 
+            
+            let (middle, bottom) = (chunks[0], chunks[1]);
+            
+            main_section = middle;
+            logs = Some(bottom);
         } else {
-            main_rect = main_block;
+            main_section = main_block;
         }
 
-        // split the main block into 1, 2, or 3 vertical chunks
-        // (results + preview + remote)
-        let mut constraints = vec![Constraint::Fill(1)];
-
-        if with_preview {
-            constraints.push(Constraint::Fill(1));
+        // Main section: Results - Preview - Remote control
+        if with_preview && with_remote {
+            let constraints = [Constraint::Fill(1), Constraint::Fill(1), Constraint::Length(24)];
+            let chunks = new_layout(main_section, constraints, Direction::Horizontal); 
+            
+            let (left, middle, right) = (chunks[0], chunks[1], chunks[2]);
+            
+            results = ResultsLayout::new(left);
+            preview = Some(middle);
+            remote = Some(RemoteControlLayout::new(right);
+        } else if with_preview {
+            let constraints = [Constraint::Fill(1), Constraint::Fill(1)];
+            let chunks = new_layout(main_section, constraints, Direction::Horizontal);
+            
+            let (left, middle) = (chunks[0], chunks[1]);
+            
+            results_layout = ResultsLayout::new(left);
+            preview = Some(middle);
+        } else if with_remote {
+            let constraints = [Constraint::Fill(1), Constraint::Length(24)];
+            let chunks = new_layout(main_section, constraints, Direction::Horizontal);
+            
+            let (left, right) = (chunks[0], chunks[1]);
+            
+            results = ResultsLayout::new(left);
+            remote = Some(RemoteControlLayout::new(right);
+        } else {
+            results = ResultsLayout::new(main_section)
         }
 
-        if with_remote {
-            // in order to fit with the help bar logo
-            constraints.push(Constraint::Length(24));
-        }
-
-        let vt_chunks = layout::Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(main_rect);
-
-        // left block: results + input field
-        let results_constraints = vec![Constraint::Min(3), Constraint::Length(3)];
-
-        let left_chunks = layout::Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(match input_position {
-                InputPosition::Top => results_constraints.into_iter().rev().collect(),
-                InputPosition::Bottom => results_constraints,
-            })
-            .split(vt_chunks[0]);
-
-        let (input, results) = match input_position {
-            InputPosition::Bottom => (left_chunks[1], left_chunks[0]),
-            InputPosition::Top => (left_chunks[0], left_chunks[1]),
-        };
-
-        // right block: preview title + preview
-        let mut remote_idx = 1;
-
-        let preview_window = match with_preview {
-            true => Some(vt_chunks[1]),
-            false => None,
-        };
-
-        if preview_window.is_some() {
-            remote_idx += 1;
-        }
-
-        let remote_control = match with_remote {
-            true => Some(vt_chunks[remote_idx]),
-            false => None,
-        };
-
-        Self::new(
-            help_bar_layout,
-            logs_layout,
+        Layout::new(
+            help,
+            logs,
             results,
-            input,
-            preview_window,
-            remote_control,
+            preview,
+            remote,
         )
     }
 }
@@ -296,6 +292,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1] // Return the middle chunk
 }
 
-// UI size
-const UI_WIDTH_PERCENT: u16 = 95;
-const UI_HEIGHT_PERCENT: u16 = 95;
