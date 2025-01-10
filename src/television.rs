@@ -30,11 +30,11 @@ use crate::screen::input::draw_input_box;
 use crate::screen::keybindings::{
     build_keybindings_table, DisplayableAction, DisplayableKeybindings,
 };
-use crate::screen::layout::{Dimensions, InputPosition, Layout};
+use crate::screen::layout::{Dimensions, Layout};
 use crate::screen::mode::Mode;
 use crate::screen::preview::draw_preview_content_block;
 use crate::screen::remote_control::draw_remote_control;
-use crate::screen::results::draw_results_list;
+use crate::screen::results::{draw_results_list, InputPosition};
 use crate::screen::spinner::{Spinner, SpinnerState};
 
 pub struct Television {
@@ -271,12 +271,6 @@ impl Television {
 
 impl Television {
     /// Register an action handler that can send actions for processing if necessary.
-    ///
-    /// # Arguments
-    /// * `tx` - An unbounded sender that can send actions.
-    ///
-    /// # Returns
-    /// * `Result<()>` - An Ok result or an error.
     pub fn register_action_handler(
         &mut self,
         tx: UnboundedSender<Action>,
@@ -287,12 +281,6 @@ impl Television {
 
     #[allow(clippy::unused_async)]
     /// Update the state of the component based on a received action.
-    ///
-    /// # Arguments
-    /// * `action` - An action that may modify the state of the television.
-    ///
-    /// # Returns
-    /// * `Result<Option<Action>>` - An action to be processed or none.
     pub async fn update(&mut self, action: Action) -> Result<Option<Action>> {
         match action {
             // handle input actions
@@ -464,7 +452,6 @@ impl Television {
     }
 
     /// Render the television on the screen.
-    ///
     pub fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
         let selected_entry = self
             .get_selected_entry(Some(Mode::Channel))
@@ -480,92 +467,101 @@ impl Television {
             self.config.ui.input_bar_position,
         );
 
-        // help bar (metadata, keymaps, logo)
-        draw_help_bar(
-            f,
-            &layout.help_bar,
-            self.current_channel(),
-            build_keybindings_table(
-                &self.config.keybindings.to_displayable(),
+        // Draw Help Bar
+        if let Some(help_bar) = &layout.help_bar {
+            draw_help_bar(
+                f,
+                help_bar,
+                self.current_channel(),
+                build_keybindings_table(
+                    &self.config.keybindings.to_displayable(),
+                    self.mode,
+                    &self.colorscheme,
+                ),
                 self.mode,
+                &self.app_metadata,
                 &self.colorscheme,
-            ),
-            self.mode,
-            &self.app_metadata,
-            &self.colorscheme,
-        );
-
-        // Logs
-        draw_logs_bar(f, &layout.logs, &self.colorscheme);
-
-        self.results_area_height = u32::from(layout.results.height.saturating_sub(2)); // 2 for the borders
-
-        self.preview_pane_height = match layout.preview_window {
-            Some(preview) => preview.height,
-            None => 0,
-        };
-
-        // results list
-        let result_count = self.channel.result_count();
-        if result_count > 0 && self.results_picker.selected().is_none() {
-            self.results_picker.select(Some(0));
-            self.results_picker.relative_select(Some(0));
+            );
         }
 
-        let entries = self.channel.results(
-            self.results_area_height,
-            u32::try_from(self.results_picker.offset())?,
-        );
+        // Draw Logs
+        if let Some(logs) = layout.logs {
+            draw_logs_bar(f, logs, &self.colorscheme);
+        }
 
-        draw_results_list(
-            f,
-            layout.results.results,
-            &entries,
-            self.channel.selected_entries(),
-            &mut self.results_picker.relative_state,
-            self.config.ui.input_bar_position,
-            self.config.ui.use_nerd_font_icons,
-            &mut self.icon_color_cache,
-            &self.colorscheme,
-            &self
-                .config
-                .keybindings
-                .get(&self.mode)
-                .unwrap()
-                .get(&Action::ToggleHelp)
-                // just display the first keybinding
-                .unwrap()
-                .to_string(),
-            &self
-                .config
-                .keybindings
-                .get(&self.mode)
-                .unwrap()
-                .get(&Action::TogglePreview)
-                // just display the first keybinding
-                .unwrap()
-                .to_string(),
-        )?;
+        // Draw Results Section
+        { 
 
-        // input box
-        draw_input_box(
-            f,
-            layout.results.input,
-            result_count,
-            self.channel.total_count(),
-            &mut self.results_picker.input,
-            &mut self.results_picker.state,
-            self.channel.running(),
-            &self.spinner,
-            &mut self.spinner_state,
-            &self.colorscheme,
-        )?;
+            // 2 for the borders
+            self.results_area_height = u32::from(layout.results.results.height.saturating_sub(2));
 
+            let result_count = self.channel.result_count();
+        
+            if result_count > 0 && self.results_picker.selected().is_none() {
+                self.results_picker.select(Some(0));
+                self.results_picker.relative_select(Some(0));
+            }
+
+            let entries = self.channel.results(
+                self.results_area_height,
+                u32::try_from(self.results_picker.offset())?,
+            );
+
+            draw_results_list(
+                f,
+                layout.results.results,
+                &entries,
+                self.channel.selected_entries(),
+                &mut self.results_picker.relative_state,
+                self.config.ui.input_bar_position,
+                self.config.ui.use_nerd_font_icons,
+                &mut self.icon_color_cache,
+                &self.colorscheme,
+                &self
+                    .config
+                    .keybindings
+                    .get(&self.mode)
+                    .unwrap()
+                    .get(&Action::ToggleHelp)
+                    // just display the first keybinding
+                    .unwrap()
+                    .to_string(),
+                &self
+                    .config
+                    .keybindings
+                    .get(&self.mode)
+                    .unwrap()
+                    .get(&Action::TogglePreview)
+                    // just display the first keybinding
+                    .unwrap()
+                    .to_string(),
+            )?;
+
+            // input box
+            draw_input_box(
+                f,
+                layout.results.input,
+                result_count,
+                self.channel.total_count(),
+                &mut self.results_picker.input,
+                &mut self.results_picker.state,
+                self.channel.running(),
+                &self.spinner,
+                &mut self.spinner_state,
+                &self.colorscheme,
+            )?;
+        }
+
+        // Draw Preview Content
         if self.config.ui.show_preview_panel
         {
-            // preview content
+
+            self.preview_pane_height = layout.preview_window.map_or(0, |preview| preview.height);
+
             let preview = self.previewer.preview(&selected_entry, &self.preview_command);
+
             self.current_preview_total_lines = preview.total_lines();
+
             // initialize preview scroll
             self.maybe_init_preview_scroll(
                 selected_entry
@@ -573,8 +569,10 @@ impl Television {
                     .map(|l| u16::try_from(l).unwrap_or(0)),
                 layout.preview_window.unwrap().height,
             );
+
             draw_preview_content_block(
                 f,
+                // This deviates from help and logs, wny exactly?
                 layout.preview_window.unwrap(),
                 &selected_entry,
                 &preview,
@@ -585,18 +583,21 @@ impl Television {
             )?;
         }
 
-        // remote control
+        // Draw Remote Control
         if matches!(self.mode, Mode::RemoteControl | Mode::SendToChannel) {
             // NOTE: this should be done in the `update` method
             let result_count = self.remote_control.result_count();
+
             if result_count > 0 && self.rc_picker.selected().is_none() {
                 self.rc_picker.select(Some(0));
                 self.rc_picker.relative_select(Some(0));
             }
+
             let entries = self.remote_control.results(
                 area.height.saturating_sub(2).into(),
                 u32::try_from(self.rc_picker.offset())?,
             );
+
             draw_remote_control(
                 f,
                 layout.remote_control.unwrap(),

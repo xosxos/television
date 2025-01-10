@@ -9,23 +9,30 @@ use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::{Color, Line, Modifier, Span, Style, Stylize, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap};
 use ratatui::Frame;
+use serde::Deserialize;
 
-use crate::entry::Entry;
-use crate::screen::{
-    cache::RenderedPreviewCache,
-    colors::{Colorscheme, PreviewColorscheme},
-};
+use crate::previewers::{Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG};
+use crate::screen::cache::RenderedPreviewCache;
+use crate::screen::colors::{Colorscheme, PreviewColorscheme};
 use crate::utils::strings::{
     replace_non_printable, shrink_with_ellipsis, ReplaceNonPrintableConfig, EMPTY_STRING,
 };
-use crate::{
-    ansi::IntoText,
-    previewers::{Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG},
-};
+use crate::{ansi::IntoText, entry::Entry};
 
 #[allow(dead_code)]
 const FILL_CHAR_SLANTED: char = '╱';
 const FILL_CHAR_EMPTY: char = ' ';
+
+#[derive(Debug, Clone, Copy, Deserialize, Default, strum::Display)]
+pub enum PreviewTitlePosition {
+    #[default]
+    #[serde(rename = "top")]
+    #[strum(serialize = "top")]
+    Top,
+    #[serde(rename = "bottom")]
+    #[strum(serialize = "bottom")]
+    Bottom,
+}
 
 pub fn build_preview_paragraph(
     preview_block: Block<'_>,
@@ -232,6 +239,7 @@ pub fn draw_preview_content_block(
     colorscheme: &Colorscheme,
 ) -> Result<()> {
     let mut preview_title_spans = vec![Span::from(" ")];
+
     if preview.icon.is_some() && use_nerd_font_icons {
         let icon = preview.icon.as_ref().unwrap();
         preview_title_spans.push(Span::styled(
@@ -243,6 +251,7 @@ pub fn draw_preview_content_block(
             Style::default().fg(Color::from_str(icon.color)?),
         ));
     }
+
     preview_title_spans.push(Span::styled(
         shrink_with_ellipsis(
             &replace_non_printable(
@@ -254,7 +263,9 @@ pub fn draw_preview_content_block(
         ),
         Style::default().fg(colorscheme.preview.title_fg).bold(),
     ));
+
     preview_title_spans.push(Span::from(" "));
+
     let preview_outer_block = Block::default()
         .title_top(
             Line::from(preview_title_spans)
@@ -273,7 +284,9 @@ pub fn draw_preview_content_block(
         bottom: 0,
         left: 1,
     });
+
     let inner = preview_outer_block.inner(rect);
+
     f.render_widget(preview_outer_block, rect);
 
     let target_line = entry.line_number.map(|l| u16::try_from(l).unwrap_or(0));
@@ -287,6 +300,7 @@ pub fn draw_preview_content_block(
     }
     // If not, render the preview content and cache it if not empty
     let c_scheme = colorscheme.clone();
+
     let rp = build_preview_paragraph(
         preview_inner_block,
         inner,
@@ -295,16 +309,19 @@ pub fn draw_preview_content_block(
         preview_scroll,
         c_scheme,
     );
+
     if !preview.stale {
         rendered_preview_cache
             .lock()
             .unwrap()
             .insert(cache_key, &Arc::new(rp.clone()));
     }
+
     f.render_widget(
         Arc::new(rp).as_ref().clone().scroll((preview_scroll, 0)),
         inner,
     );
+
     Ok(())
 }
 

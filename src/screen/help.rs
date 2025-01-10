@@ -1,14 +1,38 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{self, Constraint, Direction, Rect};
 use ratatui::prelude::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Table};
 use ratatui::Frame;
 
 use crate::channels::UnitChannel;
 use crate::screen::colors::{Colorscheme, GeneralColorscheme};
-use crate::screen::layout::HelpBarLayout;
 use crate::screen::metadata::build_metadata_table;
 use crate::screen::mode::{mode_color, Mode};
 use crate::utils::AppMetadata;
+
+#[derive(Debug, Clone, Copy)]
+pub struct HelpBarLayout {
+    pub left: Rect,
+    pub right: Rect,
+}
+
+impl HelpBarLayout {
+    pub fn new(area: Rect, _show_logo: bool) -> Self {
+        //-------------------  metadata ------------ keymaps -------
+        let constraints = [Constraint::Fill(1), Constraint::Fill(1)];
+
+        let chunks = layout::Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(area);
+
+        Self {
+            // metadata
+            left: chunks[0],
+            // keymaps
+            right: chunks[1],
+        }
+    }
+}
 
 fn draw_metadata_block(
     f: &mut Frame,
@@ -51,22 +75,21 @@ fn draw_keymaps_block(
 
 pub fn draw_help_bar(
     f: &mut Frame,
-    layout: &Option<HelpBarLayout>,
+    help_bar: &HelpBarLayout,
     current_channel: UnitChannel,
     keymap_table: Table,
     mode: Mode,
     app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
-    if let Some(help_bar) = layout {
-        draw_metadata_block(
-            f,
-            help_bar.left,
-            mode,
-            current_channel,
-            app_metadata,
-            colorscheme,
-        );
-        draw_keymaps_block(f, help_bar.middle, keymap_table, &colorscheme.general);
-    }
+    draw_metadata_block(
+        f,
+        help_bar.left,
+        mode,
+        current_channel,
+        app_metadata,
+        colorscheme,
+    );
+
+    draw_keymaps_block(f, help_bar.right, keymap_table, &colorscheme.general);
 }

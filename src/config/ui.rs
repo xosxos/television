@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use config::ValueKind;
 use serde::Deserialize;
 
-use crate::screen::layout::{InputPosition, PreviewTitlePosition};
+use crate::screen::{preview::PreviewTitlePosition, results::InputPosition};
 
 use super::themes::DEFAULT_THEME;
 

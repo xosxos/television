@@ -2,7 +2,7 @@ use rustc_hash::FxHashMap;
 
 use color_eyre::eyre::Result;
 
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{self, Alignment, Constraint, Direction, Rect};
 use ratatui::prelude::Style;
 use ratatui::style::{Color, Stylize};
 use ratatui::text::{Line, Span};
@@ -11,11 +11,30 @@ use ratatui::Frame;
 
 use crate::entry::Entry;
 
-use crate::screen::colors::{Colorscheme, GeneralColorscheme};
-use crate::screen::mode::{mode_color, Mode};
+use crate::screen::colors::Colorscheme;
+use crate::screen::mode::Mode;
 use crate::screen::results::build_results_list;
-use crate::layout::RemoteControlLayout;
 use crate::utils::input::Input;
+
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteControlLayout {
+    pub top: Rect,
+    pub bottom: Rect,
+}
+
+impl RemoteControlLayout {
+    pub fn new(area: Rect, _show_logo: bool) -> Self {
+        let chunks = layout::Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Fill(1), Constraint::Max(3)])
+            .split(area);
+
+        Self {
+            top: chunks[0],
+            bottom: chunks[1],
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_remote_control(
@@ -26,7 +45,7 @@ pub fn draw_remote_control(
     picker_state: &mut ListState,
     input_state: &mut Input,
     icon_color_cache: &mut FxHashMap<String, Color>,
-    mode: &Mode,
+    _mode: &Mode,
     colorscheme: &Colorscheme,
 ) -> Result<()> {
     draw_rc_channels(
@@ -38,7 +57,9 @@ pub fn draw_remote_control(
         icon_color_cache,
         colorscheme,
     );
+
     draw_rc_input(f, layout.bottom, input_state, colorscheme)?;
+
     Ok(())
 }
 
@@ -86,34 +107,33 @@ fn draw_rc_input(
 
     let input_block_inner = input_block.inner(area);
 
-    f.render_widget(input_block, area);
+    let split = |area, constraints, direction| {
+        layout::Layout::default()
+            .direction(direction)
+            .constraints(constraints)
+            .split(area)
+    };
 
-    // split input block into 2 parts: prompt symbol, input
-    let inner_input_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            // prompt symbol
-            Constraint::Length(2),
-            // input field
-            Constraint::Fill(1),
-        ])
-        .split(input_block_inner);
+    // Split the block into Symbol and Paragraph Area
+    let constraints = [Constraint::Length(2), Constraint::Fill(1)].iter();
+    let chunks = split(input_block_inner, constraints, Direction::Horizontal);
+    let (symbol_area, paragraph_area) = (chunks[0], chunks[1]);
 
-    let prompt_symbol_block = Block::default();
+    // Define the symbol
     let arrow = Paragraph::new(Span::styled(
         "> ",
         Style::default().fg(colorscheme.input.input_fg).bold(),
     ))
-    .block(prompt_symbol_block);
-    f.render_widget(arrow, inner_input_chunks[0]);
+    .block(Block::default());
 
-    let interactive_input_block = Block::default();
     // keep 2 for borders and 1 for cursor
-    let width = inner_input_chunks[1].width.max(3) - 3;
-    let scroll = input.visual_scroll(width as usize);
+    let width = (paragraph_area.width.max(3) - 3) as usize;
+    let scroll = input.visual_scroll(width);
+
+    // Define the Input paragraph
     let input_paragraph = Paragraph::new(input.value())
         .scroll((0, u16::try_from(scroll)?))
-        .block(interactive_input_block)
+        .block(Block::default())
         .style(
             Style::default()
                 .fg(colorscheme.input.input_fg)
@@ -121,15 +141,20 @@ fn draw_rc_input(
                 .italic(),
         )
         .alignment(Alignment::Left);
-    f.render_widget(input_paragraph, inner_input_chunks[1]);
+
+    // Render
+    f.render_widget(input_block, area);
+    f.render_widget(arrow, symbol_area);
+    f.render_widget(input_paragraph, paragraph_area);
 
     // Make the cursor visible and ask tui-rs to put it at the
     // specified coordinates after rendering
     f.set_cursor_position((
         // Put cursor past the end of the input text
-        inner_input_chunks[1].x + u16::try_from(input.visual_cursor().max(scroll) - scroll)?,
+        paragraph_area.x + u16::try_from(input.visual_cursor().max(scroll) - scroll)?,
         // Move one line down, from the border to the input line
-        inner_input_chunks[1].y,
+        paragraph_area.y,
     ));
+
     Ok(())
 }
