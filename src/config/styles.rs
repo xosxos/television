@@ -1,16 +1,16 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::ops::{Deref, DerefMut};
 
 use ratatui::prelude::{Color, Modifier, Style};
 use serde::{Deserialize, Deserializer};
 
-use crate::screen::mode::Mode;
+use crate::television::Mode;
 
 #[derive(Clone, Debug, Default)]
-pub struct Styles(pub FxHashMap<Mode, FxHashMap<String, Style>>);
+pub struct Styles(pub HashMap<Mode, HashMap<String, Style>>);
 
 impl Deref for Styles {
-    type Target = FxHashMap<Mode, FxHashMap<String, Style>>;
+    type Target = HashMap<Mode, HashMap<String, Style>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -27,7 +27,7 @@ impl<'de> Deserialize<'de> for Styles {
     where
         D: Deserializer<'de>,
     {
-        let parsed_map = FxHashMap::<Mode, FxHashMap<String, String>>::deserialize(deserializer)?;
+        let parsed_map = HashMap::<Mode, HashMap<String, String>>::deserialize(deserializer)?;
 
         let styles = parsed_map
             .into_iter()

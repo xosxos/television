@@ -613,23 +613,31 @@ impl From<u8> for AnsiCode {
     }
 }
 
-/// This enum stores the error types
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, strum::Display)]
 pub enum Error {
     /// Stack is empty (should never happen)
-    #[error("Internal error: stack is empty")]
+    #[strum(serialize = "Internal error: stack is empty")]
     NomError(String),
 
     /// Error parsing the input as utf-8
-    #[cfg(feature = "simd")]
-    /// Cannot determine the foreground or background
-    #[error("{0:?}")]
-    Utf8Error(#[from] simdutf8::basic::Utf8Error),
+    #[strum(serialize = "{0}")]
+    Utf8ErrorStd(std::string::FromUtf8Error),
 
-    #[cfg(not(feature = "simd"))]
-    /// Cannot determine the foreground or background
-    #[error("{0:?}")]
-    Utf8Error(#[from] std::string::FromUtf8Error),
+    #[cfg(feature = "simd")]
+    #[strum(serialize = "{0}")]
+    Utf8Error(simdutf8::basic::Utf8Error),
+}
+
+impl From<simdutf8::basic::Utf8Error> for Error {
+    fn from(source: simdutf8::basic::Utf8Error) -> Self {
+        Error::Utf8Error(source)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(source: std::string::FromUtf8Error) -> Self {
+        Error::Utf8ErrorStd(source)
+    }
 }
 
 impl From<nom::Err<nom::error::Error<&[u8]>>> for Error {

@@ -1,62 +1,13 @@
-use std::collections::HashSet;
+use rustc_hash::{FxBuildHasher, FxHashSet as HashSet};
 
 use color_eyre::Result;
 use devicons::FileIcon;
-use rustc_hash::{FxBuildHasher, FxHashSet};
 
-use crate::channels::cable::{CableChannelPrototype, CableChannels};
-use crate::channels::{OnAir, TelevisionChannel, UnitChannel};
+use crate::channel::{Channel, ChannelConfig, ChannelConfigs, OnAir};
 use crate::entry::Entry;
 use crate::fuzzy::{Config, Matcher};
 
-use super::cable;
-
-pub struct RemoteControl {
-    matcher: Matcher<CableChannelPrototype>,
-    cable_channels: CableChannels,
-    selected_entries: FxHashSet<Entry>,
-}
-
 const NUM_THREADS: usize = 1;
-
-impl RemoteControl {
-    pub fn new(cable_channels: CableChannels) -> Self {
-        let matcher = Matcher::new(Config::default().n_threads(NUM_THREADS));
-        let injector = matcher.injector();
-
-        for channel in cable_channels
-            .iter()
-            .map(|(_, prototype)| prototype.clone())
-        {
-            let () = injector.push(channel.clone(), |e, cols| {
-                cols[0] = e.to_string().clone().into();
-            });
-        }
-
-        RemoteControl {
-            matcher,
-            cable_channels,
-            selected_entries: HashSet::with_hasher(FxBuildHasher),
-        }
-    }
-
-    pub fn zap(&self, channel_name: &str) -> Result<TelevisionChannel> {
-        if let Ok(channel) = UnitChannel::try_from(channel_name) {
-            Ok(channel.into())
-        } else {
-            let maybe_prototype = self.cable_channels.get(channel_name);
-            match maybe_prototype {
-                Some(prototype) => Ok(TelevisionChannel::Cable(cable::Channel::from(
-                    prototype.clone(),
-                ))),
-                None => Err(color_eyre::eyre::eyre!(
-                    "No channel or cable channel prototype found for {}",
-                    channel_name
-                )),
-            }
-        }
-    }
-}
 
 const TV_ICON: FileIcon = FileIcon {
     icon: '📺',
@@ -68,6 +19,40 @@ const CABLE_ICON: FileIcon = FileIcon {
     color: "#000000",
 };
 
+pub struct RemoteControl {
+    matcher: Matcher<ChannelConfig>,
+    channels: ChannelConfigs,
+    selected_entries: HashSet<Entry>,
+}
+
+impl RemoteControl {
+    pub fn new(channels: ChannelConfigs) -> Self {
+        let matcher = Matcher::new(Config::default().n_threads(NUM_THREADS));
+        let injector = matcher.injector();
+
+        for channel in channels.values() {
+            let () = injector.push(channel.clone(), |e, cols| {
+                cols[0] = e.to_string().clone().into();
+            });
+        }
+
+        RemoteControl {
+            matcher,
+            channels,
+            selected_entries: HashSet::with_hasher(FxBuildHasher),
+        }
+    }
+
+    pub fn zap(&self, channel_name: &str) -> Result<Channel> {
+        match self.channels.get(channel_name) {
+            Some(prototype) => Ok(Channel::from(prototype.clone())),
+            None => Err(color_eyre::eyre::eyre!(
+                "No channel or cable channel prototype found for {}",
+                channel_name
+            )),
+        }
+    }
+}
 impl OnAir for RemoteControl {
     fn find(&mut self, pattern: &str) {
         self.matcher.find(pattern);
@@ -87,7 +72,7 @@ impl OnAir for RemoteControl {
             .collect()
     }
 
-    fn selected_entries(&self) -> &FxHashSet<Entry> {
+    fn selected_entries(&self) -> &HashSet<Entry> {
         &self.selected_entries
     }
 

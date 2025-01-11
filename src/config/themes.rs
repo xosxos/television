@@ -1,6 +1,7 @@
 #![allow(clippy::from_over_into)]
 
-use std::path::PathBuf;
+use rustc_hash::FxHashMap as HashMap;
+use std::{path::PathBuf, sync::LazyLock};
 
 use color_eyre::Result;
 use ratatui::style::Color as RatatuiColor;
@@ -13,10 +14,9 @@ use crate::screen::colors::{
 
 use super::get_config_dir;
 
-lazy_static::lazy_static! {
-    #[rustfmt::skip]
-    pub static ref BUILTIN_THEMES: rustc_hash::FxHashMap<&'static str, &'static str> = {
-        rustc_hash::FxHashMap::from_iter([
+#[rustfmt::skip]
+static BUILTIN_THEMES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(||
+        HashMap::from_iter([
             ("default", include_str!("../../config/themes/default.toml")),
             ("television", include_str!("../../config/themes/television.toml")),
             ("gruvbox-dark", include_str!("../../config/themes/gruvbox-dark.toml")),
@@ -30,8 +30,7 @@ lazy_static::lazy_static! {
             ("onedark", include_str!("../../config/themes/onedark.toml")),
             ("tokyonight", include_str!("../../config/themes/tokyonight.toml")),
         ])
-    };
-}
+);
 
 pub const DEFAULT_THEME: &str = "default";
 

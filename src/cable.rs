@@ -1,9 +1,9 @@
-use rustc_hash::FxHashMap;
+use indexmap::IndexMap;
 
 use color_eyre::Result;
 use tracing::{debug, error};
 
-use crate::channels::cable::{CableChannelPrototype, CableChannels};
+use crate::channel::{ChannelConfig, ChannelConfigs};
 use crate::config::get_config_dir;
 
 const CABLE_FILE_NAME_SUFFIX: &str = "channels";
@@ -23,12 +23,12 @@ const DEFAULT_CABLE_CHANNELS: &str = include_str!("../config/channels.toml");
 ///   ├── my_channels.toml
 ///   └── windows_channels.toml
 /// ```
-pub fn load_cable_channels() -> Result<CableChannels> {
+pub fn load_cable_channels(hide_defaults: bool) -> Result<ChannelConfigs> {
     /// Just a proxy struct to deserialize prototypes
     #[derive(Debug, serde::Deserialize, Default)]
     struct ChannelPrototypes {
         #[serde(rename = "cable_channel")]
-        prototypes: Vec<CableChannelPrototype>,
+        prototypes: Vec<ChannelConfig>,
     }
 
     //
@@ -56,14 +56,18 @@ pub fn load_cable_channels() -> Result<CableChannels> {
             r.unwrap_or_default().prototypes
         })
         .map(|prototype| (prototype.name.clone(), prototype))
-        .collect::<FxHashMap<_, _>>();
+        .collect::<IndexMap<_, _>>();
 
-    // Load defaults
-    for channel in toml::from_str::<ChannelPrototypes>(DEFAULT_CABLE_CHANNELS)?.prototypes {
-        channels.insert(channel.name.clone(), channel);
+    if !hide_defaults {
+        // Load defaults
+        for channel in toml::from_str::<ChannelPrototypes>(DEFAULT_CABLE_CHANNELS)?.prototypes {
+            if !channels.contains_key(&channel.name) {
+                channels.insert(channel.name.clone(), channel);
+            }
+        }
     }
 
-    Ok(CableChannels(channels))
+    Ok(channels)
 }
 
 fn is_cable_file_format<P>(p: P) -> bool

@@ -1,12 +1,15 @@
 use ratatui::layout::{self, Constraint, Direction, Rect};
-use ratatui::prelude::{Color, Style};
+use ratatui::prelude::Style;
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Table};
 use ratatui::Frame;
+use ratatui::{
+    text::Span,
+    widgets::{Cell, Row},
+};
 
-use crate::channels::UnitChannel;
+use crate::channel::Channel;
 use crate::screen::colors::{Colorscheme, GeneralColorscheme};
-use crate::screen::metadata::build_metadata_table;
-use crate::screen::mode::{mode_color, Mode};
+use crate::television::Mode;
 use crate::utils::AppMetadata;
 
 #[derive(Debug, Clone, Copy)]
@@ -38,7 +41,7 @@ fn draw_metadata_block(
     f: &mut Frame,
     area: Rect,
     mode: Mode,
-    current_channel: UnitChannel,
+    current_channel: &Channel,
     app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
@@ -76,7 +79,7 @@ fn draw_keymaps_block(
 pub fn draw_help_bar(
     f: &mut Frame,
     help_bar: &HelpBarLayout,
-    current_channel: UnitChannel,
+    current_channel: &Channel,
     keymap_table: Table,
     mode: Mode,
     app_metadata: &AppMetadata,
@@ -92,4 +95,70 @@ pub fn draw_help_bar(
     );
 
     draw_keymaps_block(f, help_bar.right, keymap_table, &colorscheme.general);
+}
+
+pub fn build_metadata_table<'a>(
+    mode: Mode,
+    current_channel: &Channel,
+    app_metadata: &'a AppMetadata,
+    colorscheme: &'a Colorscheme,
+) -> Table<'a> {
+    let version_row = Row::new(vec![
+        Cell::from(Span::styled(
+            "version: ",
+            Style::default().fg(colorscheme.help.metadata_field_name_fg),
+        )),
+        Cell::from(Span::styled(
+            &app_metadata.version,
+            Style::default().fg(colorscheme.help.metadata_field_value_fg),
+        )),
+    ]);
+
+    let current_dir_row = Row::new(vec![
+        Cell::from(Span::styled(
+            "current directory: ",
+            Style::default().fg(colorscheme.help.metadata_field_name_fg),
+        )),
+        Cell::from(Span::styled(
+            std::env::current_dir()
+                .expect("Could not get current directory")
+                .display()
+                .to_string(),
+            Style::default().fg(colorscheme.help.metadata_field_value_fg),
+        )),
+    ]);
+
+    let current_channel_row = Row::new(vec![
+        Cell::from(Span::styled(
+            "current channel: ",
+            Style::default().fg(colorscheme.help.metadata_field_name_fg),
+        )),
+        Cell::from(Span::styled(
+            current_channel.name.to_string(),
+            Style::default().fg(colorscheme.help.metadata_field_value_fg),
+        )),
+    ]);
+
+    let current_mode_row = Row::new(vec![
+        Cell::from(Span::styled(
+            "current mode: ",
+            Style::default().fg(colorscheme.help.metadata_field_name_fg),
+        )),
+        Cell::from(Span::styled(
+            mode.to_string(),
+            Style::default().fg(mode.color(&colorscheme.mode)),
+        )),
+    ]);
+
+    let widths = vec![Constraint::Fill(1), Constraint::Fill(2)];
+
+    Table::new(
+        vec![
+            version_row,
+            current_dir_row,
+            current_channel_row,
+            current_mode_row,
+        ],
+        widths,
+    )
 }

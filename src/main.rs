@@ -2,20 +2,20 @@ use std::env;
 use std::io::{stdout, BufWriter, IsTerminal, Write};
 use std::path::Path;
 use std::process::exit;
-use rustc_hash::FxHashMap;
+use channel::PreviewCommand;
+use rustc_hash::FxHashMap as HashMap;
 
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
 
 use tracing::{debug, error, info};
 
-use crate::entry::PreviewCommand;
 use crate::app::App;
 use crate::config::Config;
-use crate::channels::cable::CableChannelPrototype;
+use crate::channel::ChannelConfig;
 use crate::utils::Shell;
-use crate::channels::{stdin::Channel as StdinChannel, TelevisionChannel};
 use crate::utils::{completion_script, is_readable_stdin};
+use crate::channel::Channel;
 
 pub mod action;
 pub mod app;
@@ -30,12 +30,13 @@ pub mod picker;
 pub mod television;
 pub mod tui;
 pub mod ansi;
-pub mod previewers;
+pub mod previewer;
 pub mod screen;
 pub mod utils;
-pub mod channels;
+pub mod channel;
 pub mod entry;
 pub mod fuzzy;
+pub mod remote_control;
 
 
 #[allow(clippy::unnecessary_wraps)]
@@ -72,8 +73,12 @@ pub struct Cli {
     pub frame_rate: Option<f64>,
 
     /// Disable the preview pane
-    #[arg(long, default_value = "false")]
+    #[arg(long)]
     pub no_preview: bool,
+
+    /// Disable the preview pane
+    #[arg(long)]
+    pub hide_defaults: bool,
 
     /// Passthrough keybindings (comma separated, e.g. "q,ctrl-w,ctrl-t") These keybindings will
     /// trigger selection of the current entry and be passed through to stdout along with the entry
@@ -122,28 +127,25 @@ async fn main() -> Result<()> {
     if let Some(command) = args.command {
         match command {
             SubCommand::ListChannels => {
-                cable::load_cable_channels()
-                    .unwrap_or_default()
-                    .iter()
-                    .for_each(|(name, _)| println!("{name}"));
+                let channels = cable::load_cable_channels(args.hide_defaults).unwrap();
 
-                exit(0);
+                for channel in channels.values() {
+                    println!("{channel}");
+                    
+                }
+
+                return Ok(())
             }
             SubCommand::InitShell { shell } => {
                 let script = completion_script(shell)?;
                 println!("{script}");
-                exit(0);
+
+                return Ok(())
             }
         }
     }
 
-    println!("{args:?}");
-    // debug!("{:?}", args);
-
-    let Ok(args_channel) = parse_channel(&args.channel) else {
-        eprintln!("Unknown channel: {}\n", args.channel);
-        std::process::exit(1);
-    };
+    let channels = cable::load_cable_channels(args.hide_defaults)?;
 
     let preview_command = args.preview.map(|preview| PreviewCommand {
             command: preview,
@@ -186,72 +188,71 @@ async fn main() -> Result<()> {
         env::set_current_dir(path)?;
     }
 
-    let channel = {
+    let channel: Channel = {
         if is_readable_stdin() {
             debug!("Using stdin channel");
-            TelevisionChannel::Stdin(StdinChannel::new())
+
+            Channel::new(String::from("stdin"), None, preview_command)
         } else if let Some(prompt) = args.autocomplete_prompt {
-            let channel = guess_channel_from_prompt(
+            guess_channel_from_prompt(
                 &prompt,
                 &config.shell_integration.commands,
-            )?;
-
-            debug!("Using guessed channel: {:?}", channel);
-
-            TelevisionChannel::Cable(channel.into())
+                args.hide_defaults,
+            )
+            .inspect(|ch| debug!("Using guessed channel: {}", ch.name))?
+            .into()
         } else {
-            debug!("Using {:?} channel", args_channel);
-
-            TelevisionChannel::Cable(args_channel.into())
+            channels
+                .values()
+                .find(|ch| ch.name.to_lowercase() == args.channel)
+                .inspect(|ch| debug!("Using {} channel", ch.name))
+                .unwrap_or_else(|| panic!("Channel not found: {}", args.channel))
+                .clone()
+                .into()
         }
     };
 
-    match App::new(
+    let mut app =  App::new(
         channel,
         config,
         &passthrough_keybindings,
         args.input,
-        preview_command
-    ) {
-        Ok(mut app) => {
-            stdout().flush()?;
+        channels,
+    )?;
 
-            // Wait for ouput
-            let output = app.run(stdout().is_terminal()).await?;
+    stdout().flush()?;
 
-            info!("{:?}", output);
+    // Run the main loop waiting for the final output
+    let output = app.run(stdout().is_terminal()).await?;
 
-            // Write to stdout
-            let stdout_handle = stdout().lock();
+    info!("{:?}", output);
 
-            let mut bufwriter = BufWriter::new(stdout_handle);
+    // Write to stdout
+    let stdout_handle = stdout().lock();
 
-            // Passthrough
-            if let Some(passthrough) = output.passthrough {
-                writeln!(bufwriter, "{passthrough}")?;
-            }
+    let mut bufwriter = BufWriter::new(stdout_handle);
 
-            // Entries
-            if let Some(entries) = output.selected_entries {
-                for entry in &entries {
-                    writeln!(bufwriter, "{}", entry.stdout_repr())?;
-                }
-            }
+    // Passthrough
+    if let Some(passthrough) = output.passthrough {
+        writeln!(bufwriter, "{passthrough}")?;
+    }
 
-            bufwriter.flush()?;
-
-            exit(0);
-        }
-        Err(err) => {
-            println!("{err:?}");
-            exit(1);
+    // Entries
+    if let Some(entries) = output.selected_entries {
+        for entry in &entries {
+            writeln!(bufwriter, "{}", entry.stdout_repr())?;
         }
     }
+
+    bufwriter.flush()?;
+
+    return Ok(())
+
 }
 
 
-pub fn parse_channel(channel: &str) -> Result<CableChannelPrototype> {
-    cable::load_cable_channels()
+pub fn parse_channel(channel: &str, hide_defaults: bool) -> Result<ChannelConfig> {
+    cable::load_cable_channels(hide_defaults)
         .unwrap_or_default()
         .iter()
         .find(|(k, _)| k.to_lowercase() == channel)
@@ -267,15 +268,16 @@ pub fn parse_channel(channel: &str) -> Result<CableChannelPrototype> {
 ///
 pub fn guess_channel_from_prompt(
     prompt: &str,
-    command_mapping: &FxHashMap<String, String>,
-) -> Result<CableChannelPrototype> {
+    command_mapping: &HashMap<String, String>,
+    hide_defaults: bool,
+) -> Result<ChannelConfig> {
     debug!("Guessing channel from prompt: {}", prompt);
 
     // git checkout -qf
     // --- -------- --- <---------
     if prompt.trim().is_empty() {
         match command_mapping.get("") {
-            Some(channel) => return parse_channel(channel),
+            Some(channel) => return parse_channel(channel, hide_defaults),
             None => return Err(eyre!("No channel found for prompt: {}", prompt)),
         }
     }
@@ -296,7 +298,7 @@ pub fn guess_channel_from_prompt(
         for word in rev_prompt_words.clone() {
             // if the stack is empty, we have a match
             if stack.is_empty() {
-                return parse_channel(channel);
+                return parse_channel(channel, hide_defaults);
             }
             // if the word matches the top of the stack, pop it
             if stack.last() == Some(&word) {
@@ -306,7 +308,7 @@ pub fn guess_channel_from_prompt(
 
         // if the stack is empty, we have a match
         if stack.is_empty() {
-            return parse_channel(channel);
+            return parse_channel(channel, hide_defaults);
         }
         // reset the stack
         stack.clear();

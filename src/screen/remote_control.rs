@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use color_eyre::eyre::Result;
 
@@ -12,8 +12,8 @@ use ratatui::Frame;
 use crate::entry::Entry;
 
 use crate::screen::colors::Colorscheme;
-use crate::screen::mode::Mode;
 use crate::screen::results::build_results_list;
+use crate::television::Mode;
 use crate::utils::input::Input;
 
 #[derive(Debug, Clone, Copy)]
@@ -44,7 +44,7 @@ pub fn draw_remote_control(
     use_nerd_font_icons: bool,
     picker_state: &mut ListState,
     input_state: &mut Input,
-    icon_color_cache: &mut FxHashMap<String, Color>,
+    icon_color_cache: &mut HashMap<String, Color>,
     _mode: &Mode,
     colorscheme: &Colorscheme,
 ) -> Result<()> {
@@ -69,7 +69,7 @@ fn draw_rc_channels(
     entries: &[Entry],
     use_nerd_font_icons: bool,
     picker_state: &mut ListState,
-    icon_color_cache: &mut FxHashMap<String, Color>,
+    icon_color_cache: &mut HashMap<String, Color>,
     colorscheme: &Colorscheme,
 ) {
     let rc_block = Block::default()

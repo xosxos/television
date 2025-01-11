@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 
@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::action::Action;
 use crate::event::{convert_raw_event_to_key, Key};
-use crate::screen::mode::Mode;
+use crate::television::Mode;
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum Binding {
@@ -29,10 +29,10 @@ impl Display for Binding {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct KeyBindings(pub config::Map<Mode, config::Map<Action, Binding>>);
+pub struct KeyBindings(pub HashMap<Mode, HashMap<Action, Binding>>);
 
 impl Deref for KeyBindings {
-    type Target = config::Map<Mode, config::Map<Action, Binding>>;
+    type Target = HashMap<Mode, HashMap<Action, Binding>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for KeyBindings {
         D: Deserializer<'de>,
     {
         let parsed_map =
-            FxHashMap::<Mode, FxHashMap<Action, SerializedBinding>>::deserialize(deserializer)?;
+            HashMap::<Mode, HashMap<Action, SerializedBinding>>::deserialize(deserializer)?;
 
         let keybindings = parsed_map
             .into_iter()

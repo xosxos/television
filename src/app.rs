@@ -1,10 +1,11 @@
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashSet as Set;
 use std::sync::Arc;
 
 use color_eyre::Result;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
+use crate::channel::{ChannelConfigs, Channel};
 use crate::config::{parse_key, Config};
 use crate::keymap::Keymap;
 use crate::television::Television;
@@ -13,9 +14,8 @@ use crate::{
     event::{Event, EventLoop, Key},
     tui::{self, RenderingTask},
 };
-use crate::screen::mode::Mode;
-use crate::channels::TelevisionChannel;
-use crate::entry::{Entry, PreviewCommand};
+use crate::television::Mode;
+use crate::entry::Entry;
 
 // Tui app
 pub struct App {
@@ -42,15 +42,15 @@ pub struct App {
 
 #[derive(Debug)]
 pub enum ActionOutcome {
-    Entries(FxHashSet<Entry>),
+    Entries(Set<Entry>),
     Input(String),
-    Passthrough(FxHashSet<Entry>, String),
+    Passthrough(Set<Entry>, String),
     None,
 }
 
 #[derive(Debug)]
 pub struct AppOutput {
-    pub selected_entries: Option<FxHashSet<Entry>>,
+    pub selected_entries: Option<Set<Entry>>,
     pub passthrough: Option<String>,
 }
 
@@ -79,11 +79,11 @@ impl From<ActionOutcome> for AppOutput {
 
 impl App {
     pub fn new(
-        channel: TelevisionChannel,
+        channel: Channel,
         config: Config,
         passthrough_keybindings: &[String],
         input: Option<String>,
-        preview_command: PreviewCommand,
+        channels: ChannelConfigs,
     ) -> Result<Self> {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (render_tx, _) = mpsc::unbounded_channel();
@@ -103,7 +103,7 @@ impl App {
             ).inspect(|v| debug!("{v:?}"))?,
             tick_rate: config.config.tick_rate,
             frame_rate: config.config.frame_rate,
-            television: Arc::new(Mutex::new(Television::new(channel, config, input, preview_command))),
+            television: Arc::new(Mutex::new(Television::new(channel, config, input, channels))),
             should_quit: false,
             should_suspend: false,
             action_tx,

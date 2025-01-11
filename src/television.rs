@@ -1,5 +1,4 @@
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
-use std::collections::HashSet;
+use rustc_hash::{FxBuildHasher, FxHashMap as HashMap, FxHashSet as HashSet};
 use std::sync::{Arc, Mutex};
 
 use color_eyre::Result;
@@ -8,11 +7,10 @@ use ratatui::{layout::Rect, style::Color, Frame};
 use tracing::warn;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::channels::{
-    remote_control::RemoteControl,
-    OnAir, TelevisionChannel, UnitChannel,
+use crate::channel::{
+    ChannelConfigs, Channel, OnAir
 };
-use crate::entry::{Entry, PreviewCommand, ENTRY_PLACEHOLDER};
+use crate::entry::{Entry, ENTRY_PLACEHOLDER};
 use crate::screen::logs::draw_logs_bar;
 use crate::utils::AppMetadata;
 use crate::utils::strings::EMPTY_STRING;
@@ -20,8 +18,8 @@ use crate::action::Action;
 use crate::config::{Config, KeyBindings, Theme};
 use crate::input::convert_action_to_input_request;
 use crate::picker::Picker;
-use crate::{cable::load_cable_channels, keymap::Keymap};
-use crate::previewers::{CommandPreviewer, CommandPreviewerConfig};
+use crate::keymap::Keymap;
+use crate::previewer::Previewer;
 
 use crate::screen::cache::RenderedPreviewCache;
 use crate::screen::colors::Colorscheme;
@@ -31,29 +29,53 @@ use crate::screen::keybindings::{
     build_keybindings_table, DisplayableAction, DisplayableKeybindings,
 };
 use crate::screen::layout::{Dimensions, Layout};
-use crate::screen::mode::Mode;
 use crate::screen::preview::draw_preview_content_block;
 use crate::screen::remote_control::draw_remote_control;
 use crate::screen::results::{draw_results_list, InputPosition};
 use crate::screen::spinner::{Spinner, SpinnerState};
+use crate::remote_control::RemoteControl;
+
+use serde::{Deserialize, Serialize};
+
+use crate::screen::colors::ModeColorscheme;
+
+#[derive(PartialEq, Copy, Clone, Hash, Eq, Debug, Serialize, Deserialize, strum::Display)]
+pub enum Mode {
+    #[strum(serialize = "Channel")]
+    Channel,
+    #[strum(serialize = "Remote Control")]
+    RemoteControl,
+    #[strum(serialize = "Send to Channel")]
+    SendToChannel,
+}
+
+impl Mode {
+    pub fn color(&self, colorscheme: &ModeColorscheme) -> Color {
+        match &self {
+            Mode::Channel => colorscheme.channel,
+            Mode::RemoteControl => colorscheme.remote_control,
+            Mode::SendToChannel => colorscheme.send_to_channel,
+        }
+    }
+}
 
 pub struct Television {
     action_tx: Option<UnboundedSender<Action>>,
     pub config: Config,
     pub keymap: Keymap,
-    pub(crate) channel: TelevisionChannel,
-    pub(crate) remote_control: TelevisionChannel,
+    pub(crate) channel: Channel,
+    pub channels: ChannelConfigs,
+    pub(crate) remote_control: RemoteControl,
     pub mode: Mode,
     pub current_pattern: String,
     pub(crate) results_picker: Picker,
     pub(crate) rc_picker: Picker,
     results_area_height: u32,
-    pub previewer: CommandPreviewer,
-    pub preview_command: PreviewCommand,
+    pub previewer: Previewer,
     pub preview_scroll: Option<u16>,
     pub preview_pane_height: u16,
     current_preview_total_lines: u16,
-    pub icon_color_cache: FxHashMap<String, Color>,
+    pub icon_color_cache: HashMap<String, Color>,
     pub rendered_preview_cache: Arc<Mutex<RenderedPreviewCache<'static>>>,
     pub(crate) spinner: Spinner,
     pub(crate) spinner_state: SpinnerState,
@@ -64,10 +86,10 @@ pub struct Television {
 impl Television {
     #[must_use]
     pub fn new(
-        mut channel: TelevisionChannel,
+        mut channel: Channel,
         config: Config,
         input: Option<String>,
-        preview_command: PreviewCommand,
+        channels: ChannelConfigs,
     ) -> Self {
         let mut results_picker = Picker::new(input.clone());
 
@@ -76,8 +98,6 @@ impl Television {
         }
 
         let keymap = Keymap::from(&config.keybindings);
-
-        let cable_channels = load_cable_channels().unwrap_or_default();
 
         let app_metadata = AppMetadata::new(
             env!("CARGO_PKG_VERSION").to_string(),
@@ -95,21 +115,19 @@ impl Television {
             action_tx: None,
             config,
             keymap,
+            previewer: Previewer::new(),
             channel,
-            remote_control: TelevisionChannel::RemoteControl(
-                RemoteControl::new(cable_channels),
-            ),
+            remote_control: RemoteControl::new(channels.clone()),
+            channels,
             mode: Mode::Channel,
             current_pattern: EMPTY_STRING.to_string(),
             results_picker,
             rc_picker: Picker::default(),
             results_area_height: 0,
-            previewer: CommandPreviewer::new(Some(CommandPreviewerConfig::new(&preview_command.delimiter))),
-            preview_command,
             preview_scroll: None,
             preview_pane_height: 0,
             current_preview_total_lines: 0,
-            icon_color_cache: FxHashMap::default(),
+            icon_color_cache: HashMap::default(),
             rendered_preview_cache: Arc::new(Mutex::new(
                 RenderedPreviewCache::default(),
             )),
@@ -121,17 +139,14 @@ impl Television {
     }
 
     pub fn init_remote_control(&mut self) {
-        let cable_channels = load_cable_channels().unwrap_or_default();
-        self.remote_control = TelevisionChannel::RemoteControl(
-            RemoteControl::new(cable_channels),
-        );
+        self.remote_control = RemoteControl::new(self.channels.clone());
     }
 
-    pub fn current_channel(&self) -> UnitChannel {
-        UnitChannel::from(&self.channel)
+    pub fn current_channel(&self) -> &Channel {
+        &self.channel
     }
 
-    pub fn change_channel(&mut self, channel: TelevisionChannel) {
+    pub fn change_channel(&mut self, channel: Channel) {
         self.reset_preview_scroll();
         self.reset_picker_selection();
         self.reset_picker_input();
@@ -175,7 +190,7 @@ impl Television {
     pub fn get_selected_entries(
         &mut self,
         mode: Option<Mode>,
-    ) -> Option<FxHashSet<Entry>> {
+    ) -> Option<HashSet<Entry>> {
         if self.channel.selected_entries().is_empty()
             || matches!(mode, Some(Mode::RemoteControl))
         {
@@ -558,7 +573,7 @@ impl Television {
 
             self.preview_pane_height = layout.preview_window.map_or(0, |preview| preview.height);
 
-            let preview = self.previewer.preview(&selected_entry, &self.preview_command);
+            let preview = self.previewer.preview(&selected_entry, &self.channel.preview_command);
 
             self.current_preview_total_lines = preview.total_lines();
 
@@ -626,10 +641,10 @@ impl Television {
 }
 
 impl KeyBindings {
-    pub fn to_displayable(&self) -> FxHashMap<Mode, DisplayableKeybindings> {
+    pub fn to_displayable(&self) -> HashMap<Mode, DisplayableKeybindings> {
         // channel mode keybindings
-        let channel_bindings: FxHashMap<DisplayableAction, Vec<String>> =
-            FxHashMap::from_iter(vec![
+        let channel_bindings: HashMap<DisplayableAction, Vec<String>> =
+            HashMap::from_iter(vec![
                 (
                     DisplayableAction::ResultsNavigation,
                     serialized_keys_for_actions(
@@ -687,10 +702,10 @@ impl KeyBindings {
             ]);
 
         // remote control mode keybindings
-        let remote_control_bindings: FxHashMap<
+        let remote_control_bindings: HashMap<
             DisplayableAction,
             Vec<String>,
-        > = FxHashMap::from_iter(vec![
+        > = HashMap::from_iter(vec![
             (
                 DisplayableAction::ResultsNavigation,
                 serialized_keys_for_actions(
@@ -712,10 +727,10 @@ impl KeyBindings {
         ]);
 
         // send to channel mode keybindings
-        let send_to_channel_bindings: FxHashMap<
+        let send_to_channel_bindings: HashMap<
             DisplayableAction,
             Vec<String>,
-        > = FxHashMap::from_iter(vec![
+        > = HashMap::from_iter(vec![
             (
                 DisplayableAction::ResultsNavigation,
                 serialized_keys_for_actions(
@@ -736,7 +751,7 @@ impl KeyBindings {
             ),
         ]);
 
-        FxHashMap::from_iter(vec![
+        HashMap::from_iter(vec![
             (Mode::Channel, DisplayableKeybindings::new(channel_bindings)),
             (
                 Mode::RemoteControl,

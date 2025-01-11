@@ -1,12 +1,12 @@
+use std::sync::LazyLock;
+
 use color_eyre::Result;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use tui_logger::{init_tui_logger, TuiTracingSubscriber};
 
 use crate::config;
 
-lazy_static::lazy_static! {
-    pub static ref LOG_FILE: String = format!("{}.log", env!("CARGO_PKG_NAME"));
-}
+static LOG_FILE: LazyLock<String> = LazyLock::new(|| format!("{}.log", env!("CARGO_PKG_NAME")));
 
 pub fn init() -> Result<()> {
     let directory = config::get_data_dir();

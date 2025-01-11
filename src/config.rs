@@ -1,22 +1,54 @@
 #![allow(clippy::module_name_repetitions)]
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, sync::LazyLock};
 
 use color_eyre::Result;
 use directories::ProjectDirs;
-pub use keybindings::{parse_key, Binding, KeyBindings};
-use lazy_static::lazy_static;
+use rustc_hash::FxHashMap as HashMap;
 use serde::Deserialize;
-use styles::Styles;
-pub use themes::Theme;
 use tracing::{debug, warn};
-use ui::UiConfig;
+
+use crate::screen::{preview::PreviewTitlePosition, results::InputPosition};
+
+use styles::Styles;
+use themes::DEFAULT_THEME;
+
+pub use keybindings::{parse_key, Binding, KeyBindings};
+pub use themes::Theme;
 
 mod keybindings;
 mod styles;
 mod themes;
-mod ui;
 
+const DEFAULT_UI_SCALE: u16 = 100;
 const CONFIG: &str = include_str!("../config/config.toml");
+const CONFIG_FILE_NAME: &str = "config.toml";
+
+static PROJECT_NAME: LazyLock<String> = LazyLock::new(|| String::from("television"));
+static PROJECT_NAME_UPPER: LazyLock<String> = LazyLock::new(|| PROJECT_NAME.to_uppercase());
+static DATA_FOLDER: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    env::var_os(format!("{}_DATA", PROJECT_NAME_UPPER.clone()))
+        .map(PathBuf::from)
+        .or_else(|| {
+            // otherwise, use the XDG data directory
+            env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .map(|p| p.join(PROJECT_NAME.as_str()))
+                .filter(|p| p.is_absolute())
+        })
+});
+
+static CONFIG_FOLDER: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    // if `TELEVISION_CONFIG` is set, use that as the television config directory
+    env::var_os(format!("{}_CONFIG", PROJECT_NAME_UPPER.clone()))
+        .map(PathBuf::from)
+        .or_else(|| {
+            // otherwise, use the XDG config directory + 'television'
+            env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .map(|p| p.join(PROJECT_NAME.as_str()))
+                .filter(|p| p.is_absolute())
+        })
+});
 
 #[allow(dead_code, clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -47,24 +79,39 @@ pub struct Config {
     pub shell_integration: ShellIntegrationConfig,
 }
 
-lazy_static! {
-    pub static ref PROJECT_NAME: String = String::from("television");
-    pub static ref PROJECT_NAME_UPPER: String = PROJECT_NAME.to_uppercase();
-    pub static ref DATA_FOLDER: Option<PathBuf> =
-        // if `TELEVISION_DATA` is set, use that as the data directory
-        env::var_os(format!("{}_DATA", PROJECT_NAME_UPPER.clone())).map(PathBuf::from).or_else(|| {
-            // otherwise, use the XDG data directory
-            env::var_os("XDG_DATA_HOME").map(PathBuf::from).map(|p| p.join(PROJECT_NAME.as_str())).filter(|p| p.is_absolute())
-        });
-    pub static ref CONFIG_FOLDER: Option<PathBuf> =
-        // if `TELEVISION_CONFIG` is set, use that as the television config directory
-        env::var_os(format!("{}_CONFIG", PROJECT_NAME_UPPER.clone())).map(PathBuf::from).or_else(|| {
-            // otherwise, use the XDG config directory + 'television'
-            env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).map(|p| p.join(PROJECT_NAME.as_str())).filter(|p| p.is_absolute())
-        });
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ShellIntegrationConfig {
+    pub commands: HashMap<String, String>,
 }
 
-const CONFIG_FILE_NAME: &str = "config.toml";
+#[derive(Clone, Debug, Deserialize)]
+pub struct UiConfig {
+    pub use_nerd_font_icons: bool,
+    pub ui_scale: u16,
+    pub show_help_bar: bool,
+    #[serde(default)]
+    pub show_logs: bool,
+    pub show_preview_panel: bool,
+    #[serde(default)]
+    pub input_bar_position: InputPosition,
+    pub preview_title_position: Option<PreviewTitlePosition>,
+    pub theme: String,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            use_nerd_font_icons: false,
+            ui_scale: DEFAULT_UI_SCALE,
+            show_help_bar: false,
+            show_logs: false,
+            show_preview_panel: true,
+            input_bar_position: InputPosition::Top,
+            preview_title_position: None,
+            theme: String::from(DEFAULT_THEME),
+        }
+    }
+}
 
 impl Config {
     // FIXME: default management is a bit of a mess right now
@@ -77,36 +124,18 @@ impl Config {
         // initialize the config builder
         let data_dir = get_data_dir();
         let config_dir = get_config_dir();
+
         std::fs::create_dir_all(&config_dir).expect("Failed creating configuration directory");
         std::fs::create_dir_all(&data_dir).expect("Failed creating data directory");
 
-        let mut builder = config::Config::builder()
-            .set_default("data_dir", data_dir.to_str().unwrap())?
-            .set_default("config_dir", config_dir.to_str().unwrap())?
-            .set_default("frame_rate", default_config.config.frame_rate)?
-            .set_default("tick_rate", default_config.config.tick_rate)?
-            .set_default("ui", default_config.ui.clone())?
-            .set_default("theme", default_config.ui.theme.clone())?
-            .set_default(
-                "shell_integration",
-                default_config.shell_integration.clone(),
-            )?;
-
-        // Load the user's config file
-        let source = config::File::from(config_dir.join(CONFIG_FILE_NAME))
-            .format(config::FileFormat::Toml)
-            .required(false);
-        builder = builder.add_source(source);
-
         if config_dir.join(CONFIG_FILE_NAME).is_file() {
             debug!("Found config file at {:?}", config_dir);
-            let mut cfg: Self = builder.build()?.try_deserialize().unwrap();
-            //.with_context(|| {
-            //    format!(
-            //        "Error parsing config file at {:?}",
-            //        config_dir.join(CONFIG_FILE_NAME)
-            //    )
-            //})?;
+
+            let path = config_dir.join(CONFIG_FILE_NAME);
+            let contents = std::fs::read_to_string(path).unwrap();
+
+            let mut cfg: Config =
+                toml::from_str(&contents).expect("default config should be valid");
 
             for (mode, default_bindings) in default_config.keybindings.iter() {
                 let user_bindings = cfg.keybindings.entry(*mode).or_default();
@@ -180,31 +209,4 @@ fn default_frame_rate() -> f64 {
 
 fn default_tick_rate() -> f64 {
     50.0
-}
-
-use std::collections::HashMap;
-
-use rustc_hash::FxHashMap;
-
-#[derive(Clone, Debug, Deserialize, Default)]
-pub struct ShellIntegrationConfig {
-    pub commands: FxHashMap<String, String>,
-}
-
-impl From<ShellIntegrationConfig> for config::ValueKind {
-    fn from(val: ShellIntegrationConfig) -> Self {
-        // Table
-        config::ValueKind::Table(HashMap::from_iter([(
-            // commands
-            String::from("commands"),
-            // commands
-            config::ValueKind::Table(
-                val.commands
-                    .into_iter()
-                    .map(|(k, v)| (k, config::ValueKind::String(v).into()))
-                    .collect(),
-            )
-            .into(),
-        )]))
-    }
 }

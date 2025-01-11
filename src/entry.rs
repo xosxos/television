@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     hash::{Hash, Hasher},
     path::PathBuf,
 };
@@ -130,27 +129,6 @@ pub const ENTRY_PLACEHOLDER: Entry = Entry {
     icon: None,
     line_number: None,
 };
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
-pub struct PreviewCommand {
-    pub command: String,
-    pub delimiter: String,
-}
-
-impl PreviewCommand {
-    pub fn new(command: &str, delimiter: &str) -> Self {
-        Self {
-            command: command.to_string(),
-            delimiter: delimiter.to_string(),
-        }
-    }
-}
-
-impl Display for PreviewCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
 
 #[cfg(test)]
 mod tests {

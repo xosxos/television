@@ -1,4 +1,4 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::Deserialize;
 use std::str::FromStr;
 
@@ -65,10 +65,10 @@ pub enum InputPosition {
 pub fn build_results_list<'a, 'b>(
     results_block: Block<'b>,
     entries: &'a [Entry],
-    selected_entries: Option<&FxHashSet<Entry>>,
+    selected_entries: Option<&HashSet<Entry>>,
     list_direction: ListDirection,
     use_icons: bool,
-    icon_color_cache: &mut FxHashMap<String, Color>,
+    icon_color_cache: &mut HashMap<String, Color>,
     colorscheme: &ResultsColorscheme,
 ) -> List<'a>
 where
@@ -203,11 +203,11 @@ pub fn draw_results_list(
     f: &mut Frame,
     rect: Rect,
     entries: &[Entry],
-    selected_entries: &FxHashSet<Entry>,
+    selected_entries: &HashSet<Entry>,
     relative_picker_state: &mut ListState,
     input_bar_position: InputPosition,
     use_nerd_font_icons: bool,
-    icon_color_cache: &mut FxHashMap<String, Color>,
+    icon_color_cache: &mut HashMap<String, Color>,
     colorscheme: &Colorscheme,
     help_keybinding: &str,
     preview_keybinding: &str,

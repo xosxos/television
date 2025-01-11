@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::fmt::Display;
 
 use ratatui::{
@@ -8,15 +8,16 @@ use ratatui::{
     widgets::{Cell, Row, Table},
 };
 
-use crate::screen::{colors::Colorscheme, mode::Mode};
+use crate::screen::colors::Colorscheme;
+use crate::television::Mode;
 
 #[derive(Debug, Clone)]
 pub struct DisplayableKeybindings {
-    bindings: FxHashMap<DisplayableAction, Vec<String>>,
+    bindings: HashMap<DisplayableAction, Vec<String>>,
 }
 
 impl DisplayableKeybindings {
-    pub fn new(bindings: FxHashMap<DisplayableAction, Vec<String>>) -> Self {
+    pub fn new(bindings: HashMap<DisplayableAction, Vec<String>>) -> Self {
         Self { bindings }
     }
 }
@@ -52,7 +53,7 @@ impl Display for DisplayableAction {
 }
 
 pub fn build_keybindings_table<'a>(
-    keybindings: &'a FxHashMap<Mode, DisplayableKeybindings>,
+    keybindings: &'a HashMap<Mode, DisplayableKeybindings>,
     mode: Mode,
     colorscheme: &'a Colorscheme,
 ) -> Table<'a> {

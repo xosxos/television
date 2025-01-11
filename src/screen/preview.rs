@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use serde::Deserialize;
 
-use crate::previewers::{Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG};
+use crate::previewer::{Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG};
 use crate::screen::cache::RenderedPreviewCache;
 use crate::screen::colors::{Colorscheme, PreviewColorscheme};
 use crate::utils::strings::{

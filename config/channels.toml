@@ -1,4 +1,74 @@
+
+# Test
+[[cable_channel]]
+name = "test"
+source_command = "printf \"foo\nfoo\nfee\nfii\n\""
+
+# Shell history
+[[cable_channel]]
+name = "zsh-history"
+source_command = "sed '1!G;h;$!d' $HOME/.zsh_history | cut -d\";\" -f 2-"
+
+[[cable_channel]]
+name = "bash-history"
+source_command = "sed '1!G;h;$!d' $HOME/.bash_history"
+
+[[cable_channel]]
+name = "fish-history"
+source_command = "fish -c 'history'"
+
+# Shell variables
+
+[[cable_channel]]
+name = "env"
+source_command = "printenv | sort | sed \"s/=/: /g\""
+preview_delimiter = ":"
+preview_command = "echo {1}"
+
+
+[[cable_channel]]
+name = "alias"
+source_command = "fish -c alias"
+preview_delimiter = ":"
+preview_command = "echo {0}"
+
+# Processes
+
+[[cable_channel]]
+name = "ps"
+source_command = "ps -ax -o pid,command"
+preview_delimiter = ":"
+preview_command = "echo {0}"
+
+# FILES
+
+[[cable_channel]]
+name = "text"
+source_command = "rg ."
+preview_delimiter = ":"
+preview_command = "bat -n --color=always {0}"
+
+[[cable_channel]]
+name = "files"
+source_command = "fd . --type f"
+preview_delimiter = ":"
+preview_command = "bat {0}"
+
+[[cable_channel]]
+name = "dirs"
+source_command = "fd . --type d"
+preview_delimiter = ":"
+preview_command = "ls -la --color=always {0}"
+
+
 # GIT
+
+[[cable_channel]]
+name = "git-repos"
+source_command = 'fd git ~/ --type d --no-ignore --hidden | rg "\.git/" | rg -v ".cargo|runtime"'
+preview_delimiter = ":"
+preview_command = "cd {} && git log -n 200 --pretty=medium --all --graph --color"
+
 [[cable_channel]]
 name = "git-diff"
 source_command = "git diff --name-only"
@@ -31,21 +101,3 @@ name = "s3-buckets"
 source_command = "aws s3 ls | cut -d \" \" -f 3"
 preview_command = "aws s3 ls s3://{0}"
 
-# Dotfiles
-[[cable_channel]]
-name = "my-dotfiles"
-source_command = "fd -t f . $HOME/.config"
-preview_command = ":files:"
-
-# Shell history
-[[cable_channel]]
-name = "zsh-history"
-source_command = "sed '1!G;h;$!d' $HOME/.zsh_history | cut -d\";\" -f 2-"
-
-[[cable_channel]]
-name = "bash-history"
-source_command = "sed '1!G;h;$!d' $HOME/.bash_history"
-
-[[cable_channel]]
-name = "fish-history"
-source_command = "fish -c 'history'"
