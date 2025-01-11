@@ -1,95 +1,44 @@
+use std::io::{BufRead, BufReader};
+use std::process::Stdio;
+use std::time::Duration;
+
+use color_eyre::Result;
 use indexmap::IndexMap;
-use rustc_hash::FxHashSet as HashSet;
-use rustc_hash::{FxBuildHasher, FxHashSet};
-use std::fmt::{self, Display, Formatter};
-use std::{
-    io::{BufRead, BufReader},
-    process::Stdio,
-    sync::LazyLock,
-};
+use rustc_hash::{FxBuildHasher, FxHashSet as HashSet};
+use tracing::{debug, error};
 
-use regex::Regex;
-use tracing::debug;
-
+use crate::config::get_config_dir;
 use crate::entry::Entry;
 use crate::fuzzy::{Config, Injector, Matcher};
+use crate::television::OnAir;
 use crate::utils::shell_command;
 
-pub trait OnAir: Send {
-    /// Find entries that match the given pattern.
-    ///
-    /// This method does not return anything and instead typically stores the
-    /// results internally for later retrieval allowing to perform the search
-    /// in the background while incrementally polling the results with
-    /// `results`.
-    fn find(&mut self, pattern: &str);
+const CABLE_FILE_NAME_SUFFIX: &str = "channels";
+const CABLE_FILE_FORMAT: &str = "toml";
 
-    /// Get the results of the search (that are currently available).
-    fn results(&mut self, num_entries: u32, offset: u32) -> Vec<Entry>;
+const DEFAULT_CABLE_CHANNELS: &str = include_str!("../config/channels.toml");
 
-    /// Get a specific result by its index.
-    fn get_result(&self, index: u32) -> Option<Entry>;
+pub const DEFAULT_DELIMITER: &str = " ";
 
-    /// Get the currently selected entries.
-    fn selected_entries(&self) -> &FxHashSet<Entry>;
-
-    /// Toggles selection for the entry under the cursor.
-    fn toggle_selection(&mut self, entry: &Entry);
-
-    /// Get the number of results currently available.
-    fn result_count(&self) -> u32;
-
-    /// Get the total number of entries currently available.
-    fn total_count(&self) -> u32;
-
-    /// Check if the channel is currently running.
-    fn running(&self) -> bool;
-
-    /// Turn off
-    fn shutdown(&self);
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
-pub struct PreviewCommand {
-    pub command: String,
-    pub delimiter: String,
-}
-
-impl PreviewCommand {
-    pub fn new(command: &str, delimiter: &str) -> Self {
-        Self {
-            command: command.to_string(),
-            delimiter: delimiter.to_string(),
-        }
-    }
-}
-
-impl Display for PreviewCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, serde::Deserialize, PartialEq)]
 pub struct ChannelConfig {
     pub name: String,
+    #[serde(rename = "source")]
     pub source_command: String,
+    #[serde(rename = "preview")]
     pub preview_command: Option<String>,
     #[serde(default = "default_delimiter")]
+    #[serde(rename = "delimiter")]
     pub preview_delimiter: Option<String>,
+    #[serde(rename = "run")]
+    pub run: Option<String>,
 }
-
-pub const DEFAULT_DELIMITER: &str = " ";
 
 #[allow(clippy::unnecessary_wraps)]
 fn default_delimiter() -> Option<String> {
     Some(DEFAULT_DELIMITER.to_string())
-}
-
-impl Display for ChannelConfig {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)
-    }
 }
 
 pub type ChannelConfigs = IndexMap<String, ChannelConfig>;
@@ -98,7 +47,7 @@ pub struct Channel {
     pub name: String,
     matcher: Matcher<String>,
     pub preview_command: PreviewCommand,
-    selected_entries: FxHashSet<Entry>,
+    selected_entries: HashSet<Entry>,
 }
 
 impl Default for Channel {
@@ -131,17 +80,29 @@ impl From<ChannelConfig> for Channel {
     }
 }
 
-static BUILTIN_PREVIEW_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:(\w+):$").unwrap());
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
+pub struct PreviewCommand {
+    pub command: String,
+    pub delimiter: String,
+}
 
-// fn parse_preview_kind(command: &PreviewCommand) -> Result<PreviewKind> {
-//     debug!("Parsing preview kind for command: {:?}", command);
-//     if let Some(captures) = BUILTIN_PREVIEW_RE.captures(&command.command) {
-//         let preview_type = PreviewType::try_from(&captures[1])?;
-//         Ok(PreviewKind::Builtin(preview_type))
-//     } else {
-//         Ok(PreviewKind::Command(command.clone()))
-//     }
-// }
+impl PreviewCommand {
+    pub fn new(command: &str, delimiter: &str) -> Self {
+        Self {
+            command: command.to_string(),
+            delimiter: delimiter.to_string(),
+        }
+    }
+
+    pub fn defaults(name: &str) -> Self {
+        let command = match name {
+            "files" => "bat {0}",
+            _ => "echo {}",
+        };
+
+        Self::new(command, DEFAULT_DELIMITER)
+    }
+}
 
 impl Channel {
     pub fn new(
@@ -153,11 +114,11 @@ impl Channel {
         let injector = matcher.injector();
 
         match entries_command {
-            Some(cmd) => {
-                std::thread::spawn(move || load_candidates(cmd, &injector));
+            Some(command) => {
+                std::thread::spawn(move || entries_from_shell_process(command, &injector));
             }
             None => {
-                std::thread::spawn(move || stream_from_stdin(&injector));
+                std::thread::spawn(move || entries_from_stdin(&injector));
             }
         }
 
@@ -170,7 +131,7 @@ impl Channel {
     }
 }
 
-fn load_candidates(command: String, injector: &Injector<String>) {
+fn entries_from_shell_process(command: String, injector: &Injector<String>) {
     debug!("Loading candidates from command: {:?}", command);
 
     let mut child = shell_command()
@@ -194,9 +155,7 @@ fn load_candidates(command: String, injector: &Injector<String>) {
     }
 }
 
-const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-fn stream_from_stdin(injector: &Injector<String>) {
+fn entries_from_stdin(injector: &Injector<String>) {
     let mut stdin = std::io::stdin().lock();
     let mut buffer = String::new();
 
@@ -225,6 +184,78 @@ fn stream_from_stdin(injector: &Injector<String>) {
     }
 }
 
+/// Load the cable configuration from the config directory.
+///
+/// Cable is loaded by compiling all files that match the following
+/// pattern in the config directory: `*channels.toml`.
+///
+/// # Example:
+/// ```
+///   config_folder/
+///   ├── cable_channels.toml
+///   ├── my_channels.toml
+///   └── windows_channels.toml
+/// ```
+pub fn load_channels(hide_defaults: bool) -> Result<ChannelConfigs> {
+    /// Just a proxy struct to deserialize prototypes
+    #[derive(Debug, serde::Deserialize, Default)]
+    struct ChannelConfigs {
+        #[serde(rename = "channel")]
+        channels: Vec<ChannelConfig>,
+    }
+
+    //
+    // Read Config directory
+    let mut channels = std::fs::read_dir(get_config_dir())?
+        //
+        // Get all files
+        .filter_map(|f| f.ok().map(|f| f.path()))
+        //
+        // Check file format
+        .filter(|p| is_cable_file_format(p) && p.is_file())
+        //
+        // Read file to toml
+        .flat_map(|path| {
+            let r: Result<ChannelConfigs, _> = toml::from_str(
+                &std::fs::read_to_string(path).expect("Unable to read configuration file"),
+            );
+
+            // Output the error
+            match &r {
+                Err(e) => error!("failed to read config: {e:?}"),
+                Ok(_) => debug!("found able channel files: {:?}", r),
+            }
+
+            r.unwrap_or_default().channels
+        })
+        .map(|prototype| (prototype.name.clone(), prototype))
+        .collect::<IndexMap<_, _>>();
+
+    if !hide_defaults {
+        // Load defaults
+        for channel in toml::from_str::<ChannelConfigs>(DEFAULT_CABLE_CHANNELS)?.channels {
+            if !channels.contains_key(&channel.name) {
+                channels.insert(channel.name.clone(), channel);
+            }
+        }
+    }
+
+    Ok(channels)
+}
+
+fn is_cable_file_format<P>(p: P) -> bool
+where
+    P: AsRef<std::path::Path>,
+{
+    let p = p.as_ref();
+    p.file_stem()
+        .and_then(|s| s.to_str())
+        .map_or(false, |s| s.ends_with(CABLE_FILE_NAME_SUFFIX))
+        && p.extension()
+            .and_then(|e| e.to_str())
+            .map_or(false, |e| e.to_lowercase() == CABLE_FILE_FORMAT)
+}
+
 impl OnAir for Channel {
     fn find(&mut self, pattern: &str) {
         self.matcher.find(pattern);
@@ -249,7 +280,7 @@ impl OnAir for Channel {
         })
     }
 
-    fn selected_entries(&self) -> &FxHashSet<Entry> {
+    fn selected_entries(&self) -> &HashSet<Entry> {
         &self.selected_entries
     }
 

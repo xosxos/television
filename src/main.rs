@@ -19,7 +19,6 @@ use crate::channel::Channel;
 
 pub mod action;
 pub mod app;
-pub mod cable;
 pub mod config;
 pub mod errors;
 pub mod event;
@@ -127,10 +126,10 @@ async fn main() -> Result<()> {
     if let Some(command) = args.command {
         match command {
             SubCommand::ListChannels => {
-                let channels = cable::load_cable_channels(args.hide_defaults).unwrap();
+                let channels = channel::load_channels(args.hide_defaults).unwrap();
 
                 for channel in channels.values() {
-                    println!("{channel}");
+                    println!("{}", channel.name);
                     
                 }
 
@@ -145,7 +144,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let channels = cable::load_cable_channels(args.hide_defaults)?;
+    let channels = channel::load_channels(args.hide_defaults)?;
 
     let preview_command = args.preview.map(|preview| PreviewCommand {
             command: preview,
@@ -212,7 +211,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let mut app =  App::new(
+    let mut app = App::new(
         channel,
         config,
         &passthrough_keybindings,
@@ -252,7 +251,7 @@ async fn main() -> Result<()> {
 
 
 pub fn parse_channel(channel: &str, hide_defaults: bool) -> Result<ChannelConfig> {
-    cable::load_cable_channels(hide_defaults)
+    channel::load_channels(hide_defaults)
         .unwrap_or_default()
         .iter()
         .find(|(k, _)| k.to_lowercase() == channel)

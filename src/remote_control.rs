@@ -3,9 +3,10 @@ use rustc_hash::{FxBuildHasher, FxHashSet as HashSet};
 use color_eyre::Result;
 use devicons::FileIcon;
 
-use crate::channel::{Channel, ChannelConfig, ChannelConfigs, OnAir};
+use crate::channel::{Channel, ChannelConfig, ChannelConfigs};
 use crate::entry::Entry;
 use crate::fuzzy::{Config, Matcher};
+use crate::television::OnAir;
 
 const NUM_THREADS: usize = 1;
 
@@ -31,8 +32,8 @@ impl RemoteControl {
         let injector = matcher.injector();
 
         for channel in channels.values() {
-            let () = injector.push(channel.clone(), |e, cols| {
-                cols[0] = e.to_string().clone().into();
+            let () = injector.push(channel.clone(), |channel, cols| {
+                cols[0] = channel.name.to_string().clone().into();
             });
         }
 

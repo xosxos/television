@@ -1,103 +1,103 @@
 
 # Test
-[[cable_channel]]
+[[channel]]
 name = "test"
-source_command = "printf \"foo\nfoo\nfee\nfii\n\""
+source = "printf \"foo\nfoo\nfee\nfii\n\""
 
 # Shell history
-[[cable_channel]]
+[[channel]]
 name = "zsh-history"
-source_command = "sed '1!G;h;$!d' $HOME/.zsh_history | cut -d\";\" -f 2-"
+source = "sed '1!G;h;$!d' $HOME/.zsh_history | cut -d\";\" -f 2-"
 
-[[cable_channel]]
+[[channel]]
 name = "bash-history"
-source_command = "sed '1!G;h;$!d' $HOME/.bash_history"
+source = "sed '1!G;h;$!d' $HOME/.bash_history"
 
-[[cable_channel]]
+[[channel]]
 name = "fish-history"
-source_command = "fish -c 'history'"
+source = "fish -c 'history'"
 
 # Shell variables
 
-[[cable_channel]]
+[[channel]]
 name = "env"
-source_command = "printenv | sort | sed \"s/=/: /g\""
-preview_delimiter = ":"
-preview_command = "echo {1}"
+source = "printenv | sort | sed \"s/=/: /g\""
+delimiter = ":"
+preview = "echo {1}"
 
 
-[[cable_channel]]
+[[channel]]
 name = "alias"
-source_command = "fish -c alias"
-preview_delimiter = ":"
-preview_command = "echo {0}"
+source = "fish -c alias"
+delimiter = ":"
+preview = "echo {0}"
 
 # Processes
 
-[[cable_channel]]
+[[channel]]
 name = "ps"
-source_command = "ps -ax -o pid,command"
-preview_delimiter = ":"
-preview_command = "echo {0}"
+source = "ps -ax -o pid,command"
+delimiter = ":"
+preview = "echo {0}"
 
 # FILES
 
-[[cable_channel]]
+[[channel]]
 name = "text"
-source_command = "rg ."
-preview_delimiter = ":"
-preview_command = "bat -n --color=always {0}"
+source = "rg ."
+delimiter = ":"
+preview = "bat -n --color=always {0}"
 
-[[cable_channel]]
+[[channel]]
 name = "files"
-source_command = "fd . --type f"
-preview_delimiter = ":"
-preview_command = "bat {0}"
+source = "fd . --type f"
+delimiter = ":"
+preview = "bat {0}"
 
-[[cable_channel]]
+[[channel]]
 name = "dirs"
-source_command = "fd . --type d"
-preview_delimiter = ":"
-preview_command = "ls -la --color=always {0}"
+source = "fd . --type d"
+delimiter = ":"
+preview = "ls -la --color=always {0}"
+run = ""
 
 
 # GIT
-
-[[cable_channel]]
+[[channel]]
 name = "git-repos"
-source_command = 'fd git ~/ --type d --no-ignore --hidden | rg "\.git/" | rg -v ".cargo|runtime"'
-preview_delimiter = ":"
-preview_command = "cd {} && git log -n 200 --pretty=medium --all --graph --color"
+source = 'fd git ~/ --type d --no-ignore --hidden | rg "\.git/" | rg -v ".cargo|runtime"'
+delimiter = ":"
+preview = "cd {} && git log -n 200 --pretty=medium --all --graph --color"
 
-[[cable_channel]]
+[[channel]]
 name = "git-diff"
-source_command = "git diff --name-only"
-preview_command = "git diff --color=always {0}"
+source = "git diff --name-only"
+preview = "git diff --color=always {0}"
 
-[[cable_channel]]
+[[channel]]
 name = "git-reflog"
-source_command = 'git reflog'
-preview_command = 'git show -p --stat --pretty=fuller --color=always {0}'
+source = 'git reflog'
+preview = 'git show -p --stat --pretty=fuller --color=always {0}'
 
-[[cable_channel]]
+[[channel]]
 name = "git-log"
-source_command = "git log --oneline --date=short --pretty=\"format:%h %s %an %cd\" \"$@\""
-preview_command = "git show -p --stat --pretty=fuller --color=always {0}"
+source = "git log --oneline --date=short --pretty=\"format:%h %s %an %cd\" \"$@\""
+preview = "git show -p --stat --pretty=fuller --color=always {0}"
 
-[[cable_channel]]
+[[channel]]
 name = "git-branch"
-source_command = "git --no-pager branch --all --format=\"%(refname:short)\""
-preview_command = "git show -p --stat --pretty=fuller --color=always {0}"
+source = "git --no-pager branch --all --format=\"%(refname:short)\""
+preview = "git show -p --stat --pretty=fuller --color=always {0}"
 
 # Docker
-[[cable_channel]]
+[[channel]]
 name = "docker-images"
-source_command = "docker image list --format \"{{.ID}}\""
-preview_command = "docker image inspect {0} | jq -C"
+source = "docker image list --format \"{{.ID}}\""
+preview = "docker image inspect {0} | jq -C"
 
 # S3
-[[cable_channel]]
+[[channel]]
 name = "s3-buckets"
-source_command = "aws s3 ls | cut -d \" \" -f 3"
-preview_command = "aws s3 ls s3://{0}"
+source = "aws s3 ls | cut -d \" \" -f 3"
+preview = "aws s3 ls s3://{0}"
 

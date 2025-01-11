@@ -7,15 +7,13 @@ use ratatui::{layout::Rect, style::Color, Frame};
 use tracing::warn;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::channel::{
-    ChannelConfigs, Channel, OnAir
-};
+use crate::channel::{ChannelConfigs, Channel};
 use crate::entry::{Entry, ENTRY_PLACEHOLDER};
 use crate::screen::logs::draw_logs_bar;
 use crate::utils::AppMetadata;
 use crate::utils::strings::EMPTY_STRING;
 use crate::action::Action;
-use crate::config::{Config, KeyBindings, Theme};
+use crate::config::{Config, Theme};
 use crate::input::convert_action_to_input_request;
 use crate::picker::Picker;
 use crate::keymap::Keymap;
@@ -25,9 +23,7 @@ use crate::screen::cache::RenderedPreviewCache;
 use crate::screen::colors::Colorscheme;
 use crate::screen::help::draw_help_bar;
 use crate::screen::input::draw_input_box;
-use crate::screen::keybindings::{
-    build_keybindings_table, DisplayableAction, DisplayableKeybindings,
-};
+use crate::screen::keybindings::build_keybindings_table;
 use crate::screen::layout::{Dimensions, Layout};
 use crate::screen::preview::draw_preview_content_block;
 use crate::screen::remote_control::draw_remote_control;
@@ -57,6 +53,40 @@ impl Mode {
             Mode::SendToChannel => colorscheme.send_to_channel,
         }
     }
+}
+
+pub trait OnAir: Send {
+    /// Find entries that match the given pattern.
+    ///
+    /// This method does not return anything and instead typically stores the
+    /// results internally for later retrieval allowing to perform the search
+    /// in the background while incrementally polling the results with
+    /// `results`.
+    fn find(&mut self, pattern: &str);
+
+    /// Get the results of the search (that are currently available).
+    fn results(&mut self, num_entries: u32, offset: u32) -> Vec<Entry>;
+
+    /// Get a specific result by its index.
+    fn get_result(&self, index: u32) -> Option<Entry>;
+
+    /// Get the currently selected entries.
+    fn selected_entries(&self) -> &HashSet<Entry>;
+
+    /// Toggles selection for the entry under the cursor.
+    fn toggle_selection(&mut self, entry: &Entry);
+
+    /// Get the number of results currently available.
+    fn result_count(&self) -> u32;
+
+    /// Get the total number of entries currently available.
+    fn total_count(&self) -> u32;
+
+    /// Check if the channel is currently running.
+    fn running(&self) -> bool;
+
+    /// Turn off
+    fn shutdown(&self);
 }
 
 pub struct Television {
@@ -638,147 +668,4 @@ impl Television {
                 Some(target_line.unwrap_or(0).saturating_sub(height / 3));
         }
     }
-}
-
-impl KeyBindings {
-    pub fn to_displayable(&self) -> HashMap<Mode, DisplayableKeybindings> {
-        // channel mode keybindings
-        let channel_bindings: HashMap<DisplayableAction, Vec<String>> =
-            HashMap::from_iter(vec![
-                (
-                    DisplayableAction::ResultsNavigation,
-                    serialized_keys_for_actions(
-                        self,
-                        &[
-                            Action::SelectPrevEntry,
-                            Action::SelectNextEntry,
-                            Action::SelectPrevPage,
-                            Action::SelectNextPage,
-                        ],
-                    ),
-                ),
-                (
-                    DisplayableAction::PreviewNavigation,
-                    serialized_keys_for_actions(
-                        self,
-                        &[
-                            Action::ScrollPreviewHalfPageUp,
-                            Action::ScrollPreviewHalfPageDown,
-                        ],
-                    ),
-                ),
-                (
-                    DisplayableAction::SelectEntry,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::ConfirmSelection],
-                    ),
-                ),
-                (
-                    DisplayableAction::CopyEntryToClipboard,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::CopyEntryToClipboard],
-                    ),
-                ),
-                (
-                    DisplayableAction::SendToChannel,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::ToggleSendToChannel],
-                    ),
-                ),
-                (
-                    DisplayableAction::ToggleRemoteControl,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::ToggleRemoteControl],
-                    ),
-                ),
-                (
-                    DisplayableAction::ToggleHelpBar,
-                    serialized_keys_for_actions(self, &[Action::ToggleHelp]),
-                ),
-            ]);
-
-        // remote control mode keybindings
-        let remote_control_bindings: HashMap<
-            DisplayableAction,
-            Vec<String>,
-        > = HashMap::from_iter(vec![
-            (
-                DisplayableAction::ResultsNavigation,
-                serialized_keys_for_actions(
-                    self,
-                    &[Action::SelectPrevEntry, Action::SelectNextEntry],
-                ),
-            ),
-            (
-                DisplayableAction::SelectEntry,
-                serialized_keys_for_actions(self, &[Action::ConfirmSelection]),
-            ),
-            (
-                DisplayableAction::ToggleRemoteControl,
-                serialized_keys_for_actions(
-                    self,
-                    &[Action::ToggleRemoteControl],
-                ),
-            ),
-        ]);
-
-        // send to channel mode keybindings
-        let send_to_channel_bindings: HashMap<
-            DisplayableAction,
-            Vec<String>,
-        > = HashMap::from_iter(vec![
-            (
-                DisplayableAction::ResultsNavigation,
-                serialized_keys_for_actions(
-                    self,
-                    &[Action::SelectPrevEntry, Action::SelectNextEntry],
-                ),
-            ),
-            (
-                DisplayableAction::SelectEntry,
-                serialized_keys_for_actions(self, &[Action::ConfirmSelection]),
-            ),
-            (
-                DisplayableAction::Cancel,
-                serialized_keys_for_actions(
-                    self,
-                    &[Action::ToggleSendToChannel],
-                ),
-            ),
-        ]);
-
-        HashMap::from_iter(vec![
-            (Mode::Channel, DisplayableKeybindings::new(channel_bindings)),
-            (
-                Mode::RemoteControl,
-                DisplayableKeybindings::new(remote_control_bindings),
-            ),
-            (
-                Mode::SendToChannel,
-                DisplayableKeybindings::new(send_to_channel_bindings),
-            ),
-        ])
-    }
-}
-
-fn serialized_keys_for_actions(
-    keybindings: &KeyBindings,
-    actions: &[Action],
-) -> Vec<String> {
-    actions
-        .iter()
-        .map(|a| {
-            keybindings
-                .get(&Mode::Channel)
-                .unwrap()
-                .get(a)
-                .unwrap()
-                .clone()
-                .to_string()
-        })
-        .collect()
 }
