@@ -1,15 +1,60 @@
-use std::fmt::Display;
+use std::fmt;
+use std::{fmt::Display, ops::Deref};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Deserializer};
 
 use crate::action::Action;
-use crate::event::{convert_raw_event_to_key, Key};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyEvent(pub crossterm::event::KeyEvent);
+
+impl KeyEvent {
+    fn new(key: KeyCode, modifiers: KeyModifiers) -> Self {
+        KeyEvent(crossterm::event::KeyEvent::new(key, modifiers))
+    }
+}
+
+impl fmt::Display for KeyEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let modifier = match self.0.modifiers {
+            KeyModifiers::SHIFT => String::from("Shift"),
+            KeyModifiers::CONTROL => String::from("Ctrl"),
+            KeyModifiers::ALT => String::from("Alt"),
+            e => e.to_string(),
+        };
+
+        if modifier.is_empty() {
+            return write!(f, "{}", self.0.code);
+        }
+
+        let key = self.0.code.to_string().to_uppercase();
+
+        if key == "BACK TAB" {
+            write!(f, "{modifier}-Tab")
+        } else {
+            write!(f, "{modifier}-{}", key)
+        }
+    }
+}
+
+impl From<crossterm::event::KeyEvent> for KeyEvent {
+    fn from(value: crossterm::event::KeyEvent) -> Self {
+        KeyEvent(value)
+    }
+}
+
+impl Deref for KeyEvent {
+    type Target = crossterm::event::KeyEvent;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Binding {
-    SingleKey(Key),
-    MultipleKeys(Vec<Key>),
+    SingleKey(KeyEvent),
+    MultipleKeys(Vec<KeyEvent>),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -47,8 +92,7 @@ macro_rules! impl_binding {
 }
 
 impl KeyBindings {
-    #[rustfmt::skip]
-    pub fn check_key_for_action(&self, key: &Key) -> Option<Action> {
+    pub fn check_key_for_action(&self, key: &KeyEvent) -> Option<Action> {
         // Could be mapped to get O(1), but I don't think it matters much
         [
             self.quit(),
@@ -75,12 +119,15 @@ impl KeyBindings {
             self.copy_entry_to_clipboard(),
         ]
         .into_iter()
-        .find_map(|(binding, action)| match binding {
-                Binding::SingleKey(k) => k == key,
-                Binding::MultipleKeys(vec) => vec.contains(key),
+        .find_map(|(binding, action)| {
+            match binding {
+                Binding::SingleKey(k) => k.0.code == key.0.code && k.0.modifiers == key.0.modifiers,
+                Binding::MultipleKeys(vec) => vec
+                    .iter()
+                    .any(|k| k.code == key.code && k.modifiers == key.modifiers),
             }
             .then_some(action)
-        )
+        })
     }
 
     // Match bindings and actions
@@ -157,42 +204,49 @@ impl<'de> Deserialize<'de> for Binding {
     }
 }
 
-pub fn parse_key_event(raw: &str) -> color_eyre::Result<KeyEvent, String> {
-    let raw_lower = raw.to_ascii_lowercase();
-    let (remaining, modifiers) = extract_modifiers(&raw_lower);
-    parse_key_code_with_modifiers(remaining, modifiers)
-}
+pub fn parse_key(raw: &str) -> color_eyre::Result<KeyEvent, String> {
+    if raw.chars().filter(|c| *c == '>').count() != raw.chars().filter(|c| *c == '<').count() {
+        return Err(format!("Unable to parse `{raw}`"));
+    }
 
-fn extract_modifiers(raw: &str) -> (&str, KeyModifiers) {
+    let raw = match raw.contains("><") {
+        true => raw,
+        false => {
+            let raw = raw.strip_prefix('<').unwrap_or(raw);
+            raw.strip_suffix('>').unwrap_or(raw)
+        }
+    }
+    .to_ascii_lowercase();
+
+    let mut raw_keycode = raw.as_str();
     let mut modifiers = KeyModifiers::empty();
-    let mut current = raw;
 
     loop {
-        match current {
+        match raw_keycode {
             rest if rest.starts_with("ctrl-") => {
                 modifiers.insert(KeyModifiers::CONTROL);
-                current = &rest[5..];
+                raw_keycode = &rest[5..];
             }
             rest if rest.starts_with("alt-") => {
                 modifiers.insert(KeyModifiers::ALT);
-                current = &rest[4..];
+                raw_keycode = &rest[4..];
             }
             rest if rest.starts_with("shift-") => {
                 modifiers.insert(KeyModifiers::SHIFT);
-                current = &rest[6..];
+                raw_keycode = &rest[6..];
             }
             _ => break, // break out of the loop if no known prefix is detected
         };
     }
 
-    (current, modifiers)
+    parse_key_code_with_modifiers(raw_keycode, modifiers)
 }
 
 fn parse_key_code_with_modifiers(
-    raw: &str,
+    raw_keycode: &str,
     mut modifiers: KeyModifiers,
 ) -> color_eyre::Result<KeyEvent, String> {
-    let c = match raw {
+    let keycode = match raw_keycode {
         "esc" => KeyCode::Esc,
         "enter" => KeyCode::Enter,
         "left" => KeyCode::Left,
@@ -232,24 +286,10 @@ fn parse_key_code_with_modifiers(
             }
             KeyCode::Char(c)
         }
-        _ => return Err(format!("Unable to parse {raw}")),
+        _ => return Err(format!("Unable to parse {raw_keycode}")),
     };
-    Ok(KeyEvent::new(c, modifiers))
-}
 
-pub fn parse_key(raw: &str) -> color_eyre::Result<Key, String> {
-    if raw.chars().filter(|c| *c == '>').count() != raw.chars().filter(|c| *c == '<').count() {
-        return Err(format!("Unable to parse `{raw}`"));
-    }
-    let raw = if raw.contains("><") {
-        raw
-    } else {
-        let raw = raw.strip_prefix('<').unwrap_or(raw);
-        let raw = raw.strip_suffix('>').unwrap_or(raw);
-        raw
-    };
-    let key_event = parse_key_event(raw)?;
-    Ok(convert_raw_event_to_key(key_event))
+    Ok(KeyEvent::new(keycode, modifiers))
 }
 
 #[cfg(test)]
@@ -259,17 +299,17 @@ mod tests {
     #[test]
     fn test_simple_keys() {
         assert_eq!(
-            parse_key_event("a").unwrap(),
+            parse_key("a").unwrap(),
             KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty())
         );
 
         assert_eq!(
-            parse_key_event("enter").unwrap(),
+            parse_key("enter").unwrap(),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())
         );
 
         assert_eq!(
-            parse_key_event("esc").unwrap(),
+            parse_key("esc").unwrap(),
             KeyEvent::new(KeyCode::Esc, KeyModifiers::empty())
         );
     }
@@ -277,17 +317,17 @@ mod tests {
     #[test]
     fn test_with_modifiers() {
         assert_eq!(
-            parse_key_event("ctrl-a").unwrap(),
+            parse_key("ctrl-a").unwrap(),
             KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
         );
 
         assert_eq!(
-            parse_key_event("alt-enter").unwrap(),
+            parse_key("alt-enter").unwrap(),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
         );
 
         assert_eq!(
-            parse_key_event("shift-esc").unwrap(),
+            parse_key("shift-esc").unwrap(),
             KeyEvent::new(KeyCode::Esc, KeyModifiers::SHIFT)
         );
     }
@@ -295,7 +335,7 @@ mod tests {
     #[test]
     fn test_multiple_modifiers() {
         assert_eq!(
-            parse_key_event("ctrl-alt-a").unwrap(),
+            parse_key("ctrl-alt-a").unwrap(),
             KeyEvent::new(
                 KeyCode::Char('a'),
                 KeyModifiers::CONTROL | KeyModifiers::ALT
@@ -303,26 +343,26 @@ mod tests {
         );
 
         assert_eq!(
-            parse_key_event("ctrl-shift-enter").unwrap(),
+            parse_key("ctrl-shift-enter").unwrap(),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         );
     }
 
     #[test]
     fn test_invalid_keys() {
-        assert!(parse_key_event("invalid-key").is_err());
-        assert!(parse_key_event("ctrl-invalid-key").is_err());
+        assert!(parse_key("invalid-key").is_err());
+        assert!(parse_key("ctrl-invalid-key").is_err());
     }
 
     #[test]
     fn test_case_insensitivity() {
         assert_eq!(
-            parse_key_event("CTRL-a").unwrap(),
+            parse_key("CTRL-a").unwrap(),
             KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
         );
 
         assert_eq!(
-            parse_key_event("AlT-eNtEr").unwrap(),
+            parse_key("AlT-eNtEr").unwrap(),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
         );
     }

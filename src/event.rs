@@ -1,21 +1,14 @@
 use std::{
-    fmt::Display,
     future::Future,
     pin::Pin,
     task::{Context, Poll as TaskPoll},
     time::Duration,
 };
 
-use crossterm::event::{
-    KeyCode::{
-        BackTab, Backspace, Char, Delete, Down, End, Enter, Esc, Home, Insert,
-        Left, PageDown, PageUp, Right, Tab, Up, F,
-    },
-    KeyEvent, KeyEventKind, KeyModifiers,
-};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::config::KeyEvent;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Event<I> {
@@ -27,105 +20,10 @@ pub enum Event<I> {
     Tick,
 }
 
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Hash,
-)]
-pub enum Key {
-    Backspace,
-    Enter,
-    Left,
-    Right,
-    Up,
-    Down,
-    CtrlSpace,
-    CtrlBackspace,
-    CtrlEnter,
-    CtrlLeft,
-    CtrlRight,
-    CtrlUp,
-    CtrlDown,
-    CtrlDelete,
-    AltSpace,
-    AltEnter,
-    AltBackspace,
-    AltDelete,
-    AltUp,
-    AltDown,
-    AltLeft,
-    AltRight,
-    ShiftLeft,
-    ShiftRight,
-    ShiftUp,
-    ShiftDown,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    BackTab,
-    Delete,
-    Insert,
-    F(u8),
-    Char(char),
-    Alt(char),
-    Ctrl(char),
-    Null,
-    Esc,
-    Tab,
-}
-
-impl Display for Key {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Key::Backspace => write!(f, "Backspace"),
-            Key::Enter => write!(f, "Enter"),
-            Key::Left => write!(f, "Left"),
-            Key::Right => write!(f, "Right"),
-            Key::Up => write!(f, "Up"),
-            Key::Down => write!(f, "Down"),
-            Key::CtrlSpace => write!(f, "Ctrl-Space"),
-            Key::CtrlBackspace => write!(f, "Ctrl-Backspace"),
-            Key::CtrlEnter => write!(f, "Ctrl-Enter"),
-            Key::CtrlLeft => write!(f, "Ctrl-Left"),
-            Key::CtrlRight => write!(f, "Ctrl-Right"),
-            Key::CtrlUp => write!(f, "Ctrl-Up"),
-            Key::CtrlDown => write!(f, "Ctrl-Down"),
-            Key::CtrlDelete => write!(f, "Ctrl-Del"),
-            Key::AltSpace => write!(f, "Alt-Space"),
-            Key::AltEnter => write!(f, "Alt-Enter"),
-            Key::AltBackspace => write!(f, "Alt-Backspace"),
-            Key::AltDelete => write!(f, "Alt-Delete"),
-            Key::AltUp => write!(f, "Alt-Up"),
-            Key::AltDown => write!(f, "Alt-Down"),
-            Key::AltLeft => write!(f, "Alt-Left"),
-            Key::AltRight => write!(f, "Alt-Right"),
-            Key::ShiftLeft => write!(f, "Shift-Left"),
-            Key::ShiftRight => write!(f, "Shift-Right"),
-            Key::ShiftUp => write!(f, "Shift-Up"),
-            Key::ShiftDown => write!(f, "Shift-Down"),
-            Key::Home => write!(f, "Home"),
-            Key::End => write!(f, "End"),
-            Key::PageUp => write!(f, "PageUp"),
-            Key::PageDown => write!(f, "PageDown"),
-            Key::BackTab => write!(f, "BackTab"),
-            Key::Delete => write!(f, "Delete"),
-            Key::Insert => write!(f, "Insert"),
-            Key::F(k) => write!(f, "F{k}"),
-            Key::Char(c) => write!(f, "{c}"),
-            Key::Alt(c) => write!(f, "Alt-{c}"),
-            Key::Ctrl(c) => write!(f, "Ctrl-{c}"),
-            Key::Null => write!(f, "Null"),
-            Key::Esc => write!(f, "Esc"),
-            Key::Tab => write!(f, "Tab"),
-        }
-    }
-}
-
 #[allow(clippy::module_name_repetitions)]
 pub struct EventLoop {
-    pub rx: mpsc::UnboundedReceiver<Event<Key>>,
-    //tx: mpsc::UnboundedSender<Event<Key>>,
+    pub rx: mpsc::UnboundedReceiver<Event<KeyEvent>>,
     pub abort_tx: mpsc::UnboundedSender<()>,
-    //tick_rate: std::time::Duration,
 }
 
 struct PollFuture {
@@ -190,8 +88,7 @@ impl EventLoop {
                             let maybe_event = crossterm::event::read();
                             match maybe_event {
                                 Ok(crossterm::event::Event::Key(key)) => {
-                                    let key = convert_raw_event_to_key(key);
-                                    tx.send(Event::Input(key)).unwrap_or_else(|_| warn!("Unable to send {:?} event", key));
+                                    tx.send(Event::Input(key.into())).unwrap_or_else(|_| warn!("Unable to send {:?} event", key));
                                 },
                                 Ok(crossterm::event::Event::FocusLost) => {
                                     tx.send(Event::FocusLost).unwrap_or_else(|_| warn!("Unable to send FocusLost event"));
@@ -211,271 +108,8 @@ impl EventLoop {
         }
 
         Self {
-            //tx,
             rx,
-            //tick_rate,
             abort_tx: abort,
         }
-    }
-}
-
-pub fn convert_raw_event_to_key(event: KeyEvent) -> Key {
-    if event.kind == KeyEventKind::Release {
-        return Key::Null;
-    }
-
-    match event.code {
-        Backspace => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlBackspace,
-            KeyModifiers::ALT => Key::AltBackspace,
-            _ => Key::Backspace,
-        },
-        Delete => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlDelete,
-            KeyModifiers::ALT => Key::AltDelete,
-            _ => Key::Delete,
-        },
-        Enter => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlEnter,
-            KeyModifiers::ALT => Key::AltEnter,
-            _ => Key::Enter,
-        },
-        Up => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlUp,
-            KeyModifiers::ALT => Key::AltUp,
-            KeyModifiers::SHIFT => Key::ShiftUp,
-            _ => Key::Up,
-        },
-        Down => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlDown,
-            KeyModifiers::ALT => Key::AltDown,
-            KeyModifiers::SHIFT => Key::ShiftDown,
-            _ => Key::Down,
-        },
-        Left => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlLeft,
-            KeyModifiers::ALT => Key::AltLeft,
-            KeyModifiers::SHIFT => Key::ShiftLeft,
-            _ => Key::Left,
-        },
-        Right => match event.modifiers {
-            KeyModifiers::CONTROL => Key::CtrlRight,
-            KeyModifiers::ALT => Key::AltRight,
-            KeyModifiers::SHIFT => Key::ShiftRight,
-            _ => Key::Right,
-        },
-        Home => Key::Home,
-        End => Key::End,
-        PageUp => Key::PageUp,
-        PageDown => Key::PageDown,
-        Tab => Key::Tab,
-        BackTab => Key::BackTab,
-        Insert => Key::Insert,
-        F(k) => Key::F(k),
-        Esc => Key::Esc,
-        Char(' ') => match event.modifiers {
-            KeyModifiers::NONE | KeyModifiers::SHIFT => Key::Char(' '),
-            KeyModifiers::CONTROL => Key::CtrlSpace,
-            KeyModifiers::ALT => Key::AltSpace,
-            _ => Key::Null,
-        },
-        Char(c) => match event.modifiers {
-            KeyModifiers::NONE | KeyModifiers::SHIFT => Key::Char(c),
-            KeyModifiers::CONTROL => Key::Ctrl(c),
-            KeyModifiers::ALT => Key::Alt(c),
-            _ => Key::Null,
-        },
-        _ => Key::Null,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
-    };
-
-    #[test]
-    fn test_convert_raw_event_to_key() {
-        // character keys
-        let event = KeyEvent {
-            code: KeyCode::Char('a'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Char('a'));
-
-        let event = KeyEvent {
-            code: KeyCode::Char('a'),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Ctrl('a'));
-
-        let event = KeyEvent {
-            code: KeyCode::Char('a'),
-            modifiers: KeyModifiers::ALT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Alt('a'));
-
-        let event = KeyEvent {
-            code: KeyCode::Char('a'),
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Char('a'));
-
-        let event = KeyEvent {
-            code: KeyCode::Char(' '),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Char(' '));
-
-        let event = KeyEvent {
-            code: KeyCode::Char(' '),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::CtrlSpace);
-
-        let event = KeyEvent {
-            code: KeyCode::Char(' '),
-            modifiers: KeyModifiers::ALT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::AltSpace);
-
-        let event = KeyEvent {
-            code: KeyCode::Char(' '),
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Char(' '));
-
-        let event = KeyEvent {
-            code: KeyCode::Backspace,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::Backspace);
-
-        let event = KeyEvent {
-            code: KeyCode::Backspace,
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        assert_eq!(convert_raw_event_to_key(event), Key::CtrlBackspace);
-
-        let event = KeyEvent {
-            code: KeyCode::Backspace,
-            modifiers: KeyModifiers::ALT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::AltBackspace);
-
-        let event = KeyEvent {
-            code: KeyCode::Backspace,
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Backspace);
-
-        let event = KeyEvent {
-            code: KeyCode::Delete,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Delete);
-
-        let event = KeyEvent {
-            code: KeyCode::Delete,
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::CtrlDelete);
-
-        let event = KeyEvent {
-            code: KeyCode::Delete,
-            modifiers: KeyModifiers::ALT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::AltDelete);
-
-        let event = KeyEvent {
-            code: KeyCode::Delete,
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Delete);
-
-        let event = KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Enter);
-
-        let event = KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::CtrlEnter);
-
-        let event = KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::ALT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::AltEnter);
-
-        let event = KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Enter);
-
-        let event = KeyEvent {
-            code: KeyCode::Up,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-
-        assert_eq!(convert_raw_event_to_key(event), Key::Up);
     }
 }

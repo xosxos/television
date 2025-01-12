@@ -12,7 +12,7 @@ use crate::screen::{preview::PreviewTitlePosition, results::InputPosition};
 use styles::Styles;
 use themes::DEFAULT_THEME;
 
-pub use keybindings::{parse_key, Binding, KeyBindings};
+pub use keybindings::{parse_key, Binding, KeyBindings, KeyEvent};
 pub use themes::Theme;
 
 mod keybindings;

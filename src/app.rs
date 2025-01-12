@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyModifiers};
 use rustc_hash::FxHashSet as Set;
 use std::sync::Arc;
 
@@ -6,11 +7,11 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 use crate::channel::{ChannelConfigs, Channel};
-use crate::config::{Config, KeyBindings};
+use crate::config::{Config, KeyBindings, KeyEvent};
 use crate::television::{OnAir, Television};
 use crate::{
     action::Action,
-    event::{Event, EventLoop, Key},
+    event::{Event, EventLoop},
     tui::{self, RenderingTask},
 };
 use crate::television::Mode;
@@ -32,7 +33,7 @@ pub struct App {
     /// The receiver channel for actions.
     action_rx: mpsc::UnboundedReceiver<Action>,
     /// The receiver channel for events.
-    event_rx: mpsc::UnboundedReceiver<Event<Key>>,
+    event_rx: mpsc::UnboundedReceiver<Event<KeyEvent>>,
     /// A sender channel to abort the event loop.
     event_abort_tx: mpsc::UnboundedSender<()>,
     /// A sender channel for rendering tasks.
@@ -141,31 +142,31 @@ impl App {
     /// This function will convert an event to an action based on the current
     /// mode the television is in.
     ///
-    async fn convert_event_to_action(&self, event: Event<Key>) -> Action {
+    async fn convert_event_to_action(&self, event: Event<KeyEvent>) -> Action {
         match event {
             Event::Input(keycode) => {
-                if keycode != Key::CtrlLeft && keycode != Key::CtrlRight {
+                let key = *keycode;
+
+                if matches!(key.modifiers, KeyModifiers::CONTROL) && [KeyCode::Left, KeyCode::Right].contains(&key.code) { 
                     info!("{:?} {:?}", keycode, self.television.lock().await.mode);
                 }
 
                 // text input events
-                match keycode {
-                    Key::Backspace => return Action::DeletePrevChar,
-                    Key::Ctrl('w') => return Action::DeletePrevWord,
-                    Key::Delete => return Action::DeleteNextChar,
-                    Key::Left => return Action::GoToPrevChar,
-                    Key::Right => return Action::GoToNextChar,
-                    Key::Home | Key::Ctrl('a') => {
-                        return Action::GoToInputStart
-                    }
-                    Key::End | Key::Ctrl('e') => return Action::GoToInputEnd,
-                    Key::Char(c) => return Action::AddInputChar(c),
+                match (key.modifiers, key.code) {
+                    (KeyModifiers::CONTROL, KeyCode::Char('w')) => return Action::DeletePrevWord,
+                    (KeyModifiers::CONTROL, KeyCode::Char('a')) | (_, KeyCode::Home) => return Action::GoToInputStart,
+                    (KeyModifiers::CONTROL, KeyCode::Char('e')) | (_, KeyCode::End) => return Action::GoToInputEnd,
+                    (KeyModifiers::NONE, KeyCode::Backspace) => return Action::DeletePrevChar,
+                    (KeyModifiers::NONE, KeyCode::Delete) => return Action::DeleteNextChar,
+                    (KeyModifiers::NONE, KeyCode::Left) => return Action::GoToPrevChar,
+                    (KeyModifiers::NONE, KeyCode::Right) => return Action::GoToNextChar,
+                    (KeyModifiers::NONE, KeyCode::Char(c)) => return Action::AddInputChar(c),
                     _ => {}
                 }
 
                 // get action based on keybindings
                 self.keymap.check_key_for_action(&keycode)
-                    .unwrap_or(if let Key::Char(c) = keycode {
+                    .unwrap_or(if let KeyCode::Char(c) = key.code {
                         Action::AddInputChar(c)
                     } else {
                         Action::NoOp
