@@ -23,9 +23,9 @@ use crate::channel::Channel;
 pub mod action;
 pub mod app;
 pub mod config;
-pub mod errors;
+pub mod init_eyre;
+pub mod init_logging;
 pub mod event;
-pub mod logging;
 pub mod picker;
 pub mod television;
 pub mod tui;
@@ -37,7 +37,7 @@ pub mod channel;
 pub mod entry;
 pub mod fuzzy;
 pub mod remote_control;
-pub mod logger_widget;
+pub mod logger;
 
 
 #[allow(clippy::unnecessary_wraps)]
@@ -123,9 +123,9 @@ pub enum SubCommand {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    errors::init()?;
+    init_eyre::init()?;
 
-    logging::init()?;
+    init_logging::init()?;
 
     let args = Cli::parse();
 
@@ -197,7 +197,9 @@ async fn main() -> Result<()> {
         if is_readable_stdin() {
             debug!("Using stdin channel");
 
-            Channel::new(String::from("stdin"), None, preview_command, args.run_command)
+            let run_command = args.run_command.map(|v| vec![v]).unwrap_or(vec![]);
+
+            Channel::new(String::from("stdin"), None, vec![preview_command], run_command)
         } else if let Some(prompt) = args.autocomplete_prompt {
             guess_channel_from_prompt(
                 &prompt,

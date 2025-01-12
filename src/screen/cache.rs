@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ratatui::widgets::Paragraph;
 
-use crate::utils::cache::RingSet;
+use crate::previewer::cache::ring_set::RingSet;
 
 const DEFAULT_RENDERED_PREVIEW_CACHE_SIZE: usize = 25;
 
@@ -27,6 +27,7 @@ impl<'a> RenderedPreviewCache<'a> {
 
     pub fn insert(&mut self, key: String, preview: &Arc<Paragraph<'a>>) {
         self.previews.insert(key.clone(), preview.clone());
+
         if let Some(oldest_key) = self.ring_set.push(key) {
             self.previews.remove(&oldest_key);
         }

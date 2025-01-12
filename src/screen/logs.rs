@@ -1,15 +1,22 @@
 use ratatui::{
     layout::Rect,
     style::Style,
-    widgets::{Block, BorderType, Borders, Padding},
+    widgets::{Block, BorderType, Borders, ListState, Padding},
     Frame,
 };
 
-use crate::logger_widget::LogWidget;
+use crate::logger::LogWidget;
 
 use super::colors::Colorscheme;
 
-pub fn draw_logs_bar(frame: &mut Frame, area: Rect, colorscheme: &Colorscheme) {
+pub fn draw_logs_bar(
+    frame: &mut Frame,
+    area: Rect,
+    colorscheme: &Colorscheme,
+    scroll: &mut ListState,
+) {
+    // f.render_widget(p.scroll((preview_scroll, 0)), inner);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -17,9 +24,9 @@ pub fn draw_logs_bar(frame: &mut Frame, area: Rect, colorscheme: &Colorscheme) {
         .style(Style::default().bg(colorscheme.general.background.unwrap_or_default()))
         .padding(Padding::horizontal(1));
 
-    let paragraph = LogWidget::default()
+    let list = LogWidget::default()
         .draw(frame.area().width as usize)
         .block(block);
 
-    frame.render_widget(paragraph, area);
+    frame.render_stateful_widget(list, area, scroll);
 }

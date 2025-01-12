@@ -1,3 +1,4 @@
+use ratatui::widgets::ListState;
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap, FxHashSet as HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -5,19 +6,18 @@ use color_eyre::Result;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use ratatui::{layout::Rect, style::Color, Frame};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::action::Action;
 use crate::channel::{Channel, ChannelConfigs};
 use crate::config::{Config, Theme};
 use crate::entry::{Entry, ENTRY_PLACEHOLDER};
+use crate::picker::Picker;
+use crate::previewer::Previewer;
 use crate::screen::logs::draw_logs_bar;
 use crate::utils::input::InputRequest;
 use crate::utils::strings::EMPTY_STRING;
 use crate::utils::AppMetadata;
-// use crate::input::convert_action_to_input_request;
-use crate::picker::Picker;
-use crate::previewer::Previewer;
 
 use crate::remote_control::RemoteControl;
 use crate::screen::cache::RenderedPreviewCache;
@@ -103,6 +103,7 @@ pub struct Television {
     results_area_height: u32,
     pub previewer: Previewer,
     pub preview_scroll: Option<u16>,
+    pub log_scroll: ListState,
     pub preview_pane_height: u16,
     current_preview_total_lines: u16,
     pub icon_color_cache: HashMap<String, Color>,
@@ -152,6 +153,7 @@ impl Television {
             rc_picker: Picker::default(),
             results_area_height: 0,
             preview_scroll: None,
+            log_scroll: ListState::default(),
             preview_pane_height: 0,
             current_preview_total_lines: 0,
             icon_color_cache: HashMap::default(),
@@ -226,13 +228,32 @@ impl Television {
                 self.reset_preview_scroll();
                 self.select_prev_entry(self.results_area_height);
             }
+            Action::SelectNextPreview => {
+                self.channel.select_next_preview_command();
+                self.reset_preview_scroll();
+            }
+            Action::SelectPrevPreview => {
+                self.channel.select_prev_preview_command();
+                self.reset_preview_scroll();
+            }
+            Action::SelectNextRun => self.channel.select_next_run_command(),
+            Action::SelectPrevRun => self.channel.select_prev_run_command(),
             Action::ScrollPreviewDown => self.scroll_preview_down(1),
             Action::ScrollPreviewUp => self.scroll_preview_up(1),
+            Action::ScrollLogUp => {
+                let offset = self.log_scroll.offset_mut();
+                *offset = offset.saturating_sub(5);
+            }
+            Action::ScrollLogDown => {
+                let offset = self.log_scroll.offset_mut();
+                *offset = offset.saturating_add(5);
+            }
             Action::ScrollPreviewHalfPageDown => self.scroll_preview_down(20),
             Action::ScrollPreviewHalfPageUp => self.scroll_preview_up(20),
             Action::ToggleRemoteControl => {
                 self.config.ui.show_remote_control = !self.config.ui.show_remote_control;
 
+                debug!("Mode before toggle: {}", self.mode);
                 match self.mode {
                     Mode::Channel => {
                         self.mode = Mode::RemoteControl;
@@ -249,6 +270,7 @@ impl Television {
                     }
                     Mode::SendToChannel => {}
                 }
+                debug!("Mode after toggle: {}", self.mode);
             }
             Action::ToggleSelectionDown | Action::ToggleSelectionUp => {
                 if matches!(self.mode, Mode::Channel) {
@@ -279,6 +301,7 @@ impl Television {
                             self.remote_control.find(EMPTY_STRING);
                             self.mode = Mode::Channel;
                             self.change_channel(new_channel);
+                            self.config.ui.show_remote_control = false;
                         }
                     }
                     Mode::SendToChannel => {
@@ -348,10 +371,8 @@ impl Television {
             | Action::Suspend
             | Action::Resume
             | Action::Quit
-            | Action::Error(_) => (),
-            Action::NoOp => {
-                // self.config.ui.show_remote_control = !self.config.ui.show_remote_control;
-            }
+            | Action::Error(_)
+            | Action::NoOp => (),
         }
         Ok(None)
     }
@@ -368,7 +389,7 @@ impl Television {
             self.config.ui.show_remote_control,
             self.config.ui.show_help_bar,
             self.config.ui.show_logs,
-            self.config.ui.show_preview_panel,
+            self.config.ui.show_preview_panel && !self.channel.preview_command.is_empty(),
             self.config.ui.input_bar_position,
         );
 
@@ -387,7 +408,7 @@ impl Television {
 
         // Draw Logs
         if let Some(logs) = layout.logs {
-            draw_logs_bar(f, logs, &self.colorscheme);
+            draw_logs_bar(f, logs, &self.colorscheme, &mut self.log_scroll);
         }
 
         // Draw Results Section
@@ -438,35 +459,38 @@ impl Television {
             )?;
         }
 
-        // Draw Preview Content
-        if self.config.ui.show_preview_panel {
-            self.preview_pane_height = layout.preview_window.map_or(0, |preview| preview.height);
+        if !self.channel.preview_command.is_empty() {
+            // Draw Preview Content
+            if let Some(preview_window) = layout.preview_window {
+                self.preview_pane_height =
+                    layout.preview_window.map_or(0, |preview| preview.height);
 
-            let preview = self
-                .previewer
-                .preview(&selected_entry, &self.channel.preview_command);
+                let preview = self
+                    .previewer
+                    .preview(&selected_entry, self.channel.current_preview_command());
 
-            self.current_preview_total_lines = preview.total_lines();
+                self.current_preview_total_lines = preview.total_lines();
 
-            // initialize preview scroll
-            self.maybe_init_preview_scroll(
-                selected_entry
-                    .line_number
-                    .map(|l| u16::try_from(l).unwrap_or(0)),
-                layout.preview_window.unwrap().height,
-            );
+                // initialize preview scroll
+                self.maybe_init_preview_scroll(
+                    selected_entry
+                        .line_number
+                        .map(|l| u16::try_from(l).unwrap_or(0)),
+                    layout.preview_window.unwrap().height,
+                );
 
-            draw_preview_content_block(
-                f,
-                // This deviates from help and logs, wny exactly?
-                layout.preview_window.unwrap(),
-                &selected_entry,
-                &preview,
-                &self.rendered_preview_cache,
-                self.preview_scroll.unwrap_or(0),
-                self.config.ui.use_nerd_font_icons,
-                &self.colorscheme,
-            )?;
+                draw_preview_content_block(
+                    f,
+                    preview_window,
+                    &selected_entry,
+                    &preview,
+                    &self.rendered_preview_cache,
+                    self.channel.current_preview_command(),
+                    self.preview_scroll.unwrap_or(0),
+                    self.config.ui.use_nerd_font_icons,
+                    &self.colorscheme,
+                )?;
+            }
         }
 
         // Draw Remote Control
@@ -566,9 +590,11 @@ impl Television {
                 (self.remote_control.total_count(), &mut self.rc_picker)
             }
         };
+
         if result_count == 0 {
             return;
         }
+
         picker.select_prev(
             step,
             result_count as usize,

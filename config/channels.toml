@@ -23,22 +23,24 @@ source = "fish -c 'history'"
 name = "env"
 source = "printenv | sort | sed \"s/=/: /g\""
 delimiter = ":"
-preview = "echo {1}"
-
 
 [[channel]]
 name = "alias"
 source = "fish -c alias"
 delimiter = ":"
-preview = "echo {0}"
 
 # Processes
 
 [[channel]]
 name = "ps"
-source = "ps -ax -o pid,command"
-delimiter = ":"
-preview = "echo {0}"
+source = "ps -ax -o pid,command | sed 's/^ * //g' | sed -r 's/ +/;/'"
+delimiter = ";"
+run = [
+  "kill {0}"
+]
+preview = [
+  "echo \"PID: {0}, NAME: {1}\"",
+]
 
 # FILES
 
@@ -46,58 +48,82 @@ preview = "echo {0}"
 name = "text"
 source = "rg ."
 delimiter = ":"
-preview = "bat -n --color=always {0}"
+preview = [
+  "bat -n --color=always {0}",
+]
 
 [[channel]]
 name = "files"
 source = "fd . --type f"
 delimiter = ":"
-preview = "bat {0} --color=always"
+preview = [
+  "bat {0} --color=always",
+]
 
 [[channel]]
 name = "dirs"
-source = "fd . --type d"
+source = 'fd . --type d | sed "s/\/$//g"'
 delimiter = ":"
-preview = "ls -la --color=always {0}"
-run = "echo cd {0}"
-
+run = [
+  "echo cd {0}",
+  "echo tar -cvf {0}.tar.gz {0}",
+]
+preview = [
+  "ls -lha --color=always {0}",
+  "eza -la --color=always {0}",
+]
 
 # GIT
 [[channel]]
 name = "git-repos"
 source = 'fd git ~/ --type d --no-ignore --hidden | rg "\.git/" | rg -v ".cargo|runtime"'
 delimiter = ":"
-preview = "cd {} && git log -n 200 --pretty=medium --all --graph --color"
+preview = [
+  "cd {} && git log -n 200 --pretty=medium --all --graph --color",
+]
 
 [[channel]]
 name = "git-diff"
 source = "git diff --name-only"
-preview = "git diff --color=always {0}"
+preview = [
+  "git diff --color=always {0} | delta --minus-style red --plus-style green",
+  "git diff --color=always {0}",
+]
 
 [[channel]]
 name = "git-reflog"
 source = 'git reflog'
-preview = 'git show -p --stat --pretty=fuller --color=always {0}'
+preview = [
+  'git show -p --stat --pretty=fuller --color=always {0}',
+]
 
 [[channel]]
 name = "git-log"
 source = "git log --oneline --date=short --pretty=\"format:%h %s %an %cd\" \"$@\""
-preview = "git show -p --stat --pretty=fuller --color=always {0}"
+preview = [
+  "git show -p --stat --pretty=fuller --color=always {0}",
+]
 
 [[channel]]
 name = "git-branch"
 source = "git --no-pager branch --all --format=\"%(refname:short)\""
-preview = "git show -p --stat --pretty=fuller --color=always {0}"
+preview = [
+  "git show -p --stat --pretty=fuller --color=always {0}",
+]
 
 # Docker
 [[channel]]
 name = "docker-images"
 source = "docker image list --format \"{{.ID}}\""
-preview = "docker image inspect {0} | jq -C"
+preview = [
+  "docker image inspect {0} | jq -C",
+]
 
 # S3
 [[channel]]
 name = "s3-buckets"
 source = "aws s3 ls | cut -d \" \" -f 3"
-preview = "aws s3 ls s3://{0}"
+preview = [
+  "aws s3 ls s3://{0}",
+]
 

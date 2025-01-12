@@ -4,7 +4,7 @@ use color_eyre::Result;
 use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
 use crate::config;
-use crate::logger_widget::{init_tui_logger, TuiTracingSubscriber};
+use crate::logger::{init_tui_logger, TuiTracingSubscriber};
 
 static LOG_FILE: LazyLock<String> = LazyLock::new(|| format!("{}.log", env!("CARGO_PKG_NAME")));
 
@@ -15,7 +15,7 @@ pub fn init() -> Result<()> {
     let log_path = directory.join(LOG_FILE.clone());
     let log_file = std::fs::File::create(log_path)?;
 
-    init_tui_logger(50);
+    init_tui_logger(200);
 
     let file_subscriber = fmt::layer()
         .with_file(true)

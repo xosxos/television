@@ -89,8 +89,10 @@ impl Picker {
     fn _select_next(&mut self, total_items: usize, height: usize) {
         let selected = self.selected().unwrap_or(0);
         let relative_selected = self.relative_selected().unwrap_or(0);
+
         self.select(Some(selected.saturating_add(1) % total_items));
         self.relative_select(Some((relative_selected + 1).min(height)));
+
         if self.selected().unwrap() == 0 {
             self.relative_select(Some(0));
         }
@@ -99,8 +101,10 @@ impl Picker {
     fn _select_prev(&mut self, total_items: usize, height: usize) {
         let selected = self.selected().unwrap_or(0);
         let relative_selected = self.relative_selected().unwrap_or(0);
+
         self.select(Some((selected + (total_items - 1)) % total_items));
         self.relative_select(Some(relative_selected.saturating_sub(1)));
+
         if self.selected().unwrap() == total_items - 1 {
             self.relative_select(Some(height));
         }

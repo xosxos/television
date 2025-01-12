@@ -19,21 +19,26 @@ pub struct KeyBindings {
     pub select_prev_entry: Binding,
     pub select_next_page: Binding,
     pub select_prev_page: Binding,
+    pub select_prev_preview: Binding,
+    pub select_next_preview: Binding,
+    pub select_prev_run: Binding,
+    pub select_next_run: Binding,
     pub toggle_remote_control: Binding,
     pub toggle_send_to_channel: Binding,
     pub toggle_help: Binding,
     pub toggle_logs: Binding,
     pub toggle_preview: Binding,
-    pub select_entry: Binding,
-    pub scroll_preview_half_page_down: Binding,
     pub scroll_preview_half_page_up: Binding,
+    pub scroll_preview_half_page_down: Binding,
+    pub scroll_log_up: Binding,
+    pub scroll_log_down: Binding,
     pub toggle_selection_down: Binding,
     pub toggle_selection_up: Binding,
     pub confirm_selection: Binding,
     pub copy_entry_to_clipboard: Binding,
 }
 
-macro_rules! impl_keybind {
+macro_rules! impl_binding {
     ($name:ident, $k:tt) => {
         pub fn $name(&self) -> (&Binding, Action) {
             (&self.$name, Action::$k)
@@ -44,20 +49,26 @@ macro_rules! impl_keybind {
 impl KeyBindings {
     #[rustfmt::skip]
     pub fn check_key_for_action(&self, key: &Key) -> Option<Action> {
+        // Could be mapped to get O(1), but I don't think it matters much
         [
             self.quit(),
             self.select_next_entry(),
             self.select_prev_entry(),
             self.select_next_page(),
             self.select_prev_page(),
+            self.select_next_preview(),
+            self.select_prev_preview(),
+            self.select_next_run(),
+            self.select_prev_run(),
             self.toggle_remote_control(),
             self.toggle_send_to_channel(),
             self.toggle_help(),
             self.toggle_logs(),
             self.toggle_preview(),
-            self.select_entry(),
-            self.scroll_preview_half_page_down(),
             self.scroll_preview_half_page_up(),
+            self.scroll_preview_half_page_down(),
+            self.scroll_log_up(),
+            self.scroll_log_down(),
             self.toggle_selection_down(),
             self.toggle_selection_up(),
             self.confirm_selection(),
@@ -72,23 +83,29 @@ impl KeyBindings {
         )
     }
 
-    impl_keybind!(quit, Quit);
-    impl_keybind!(select_next_entry, SelectNextEntry);
-    impl_keybind!(select_prev_entry, SelectPrevEntry);
-    impl_keybind!(select_next_page, SelectNextPage);
-    impl_keybind!(select_prev_page, SelectPrevPage);
-    impl_keybind!(toggle_remote_control, ToggleRemoteControl);
-    impl_keybind!(toggle_send_to_channel, ToggleSendToChannel);
-    impl_keybind!(toggle_help, ToggleHelp);
-    impl_keybind!(toggle_logs, ToggleLogs);
-    impl_keybind!(toggle_preview, TogglePreview);
-    impl_keybind!(select_entry, SelectAndExit);
-    impl_keybind!(scroll_preview_half_page_down, ScrollPreviewHalfPageDown);
-    impl_keybind!(scroll_preview_half_page_up, ScrollPreviewHalfPageUp);
-    impl_keybind!(toggle_selection_down, ToggleSelectionDown);
-    impl_keybind!(toggle_selection_up, ToggleSelectionUp);
-    impl_keybind!(confirm_selection, ConfirmSelection);
-    impl_keybind!(copy_entry_to_clipboard, CopyEntryToClipboard);
+    // Match bindings and actions
+    impl_binding!(quit, Quit);
+    impl_binding!(select_next_entry, SelectNextEntry);
+    impl_binding!(select_prev_entry, SelectPrevEntry);
+    impl_binding!(select_next_page, SelectNextPage);
+    impl_binding!(select_prev_page, SelectPrevPage);
+    impl_binding!(select_next_preview, SelectNextPreview);
+    impl_binding!(select_prev_preview, SelectPrevPreview);
+    impl_binding!(select_next_run, SelectNextRun);
+    impl_binding!(select_prev_run, SelectPrevRun);
+    impl_binding!(toggle_remote_control, ToggleRemoteControl);
+    impl_binding!(toggle_send_to_channel, ToggleSendToChannel);
+    impl_binding!(toggle_help, ToggleHelp);
+    impl_binding!(toggle_logs, ToggleLogs);
+    impl_binding!(toggle_preview, TogglePreview);
+    impl_binding!(scroll_preview_half_page_up, ScrollPreviewHalfPageUp);
+    impl_binding!(scroll_preview_half_page_down, ScrollPreviewHalfPageDown);
+    impl_binding!(scroll_log_up, ScrollLogUp);
+    impl_binding!(scroll_log_down, ScrollLogDown);
+    impl_binding!(toggle_selection_down, ToggleSelectionDown);
+    impl_binding!(toggle_selection_up, ToggleSelectionUp);
+    impl_binding!(confirm_selection, ConfirmSelection);
+    impl_binding!(copy_entry_to_clipboard, CopyEntryToClipboard);
 }
 
 impl Display for Binding {
@@ -113,6 +130,7 @@ impl<'de> Deserialize<'de> for Binding {
     where
         D: Deserializer<'de>,
     {
+        // Do this to not consume `deserializer` on the first .deserialize()
         let content = <serde::__private::de::Content as Deserialize>::deserialize(deserializer)?;
         let deserializer = serde::__private::de::ContentRefDeserializer::<D::Error>::new(&content);
 
@@ -133,9 +151,9 @@ impl<'de> Deserialize<'de> for Binding {
             ));
         }
 
-        Err(serde::de::Error::custom(
-            "data did not match any variant of untagged enum Binding",
-        ))
+        Err(serde::de::Error::custom(format!(
+            "data {content:?} did not match any variant of untagged enum Binding"
+        )))
     }
 }
 

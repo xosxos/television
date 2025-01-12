@@ -25,15 +25,19 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Debug, serde::Deserialize, PartialEq)]
 pub struct ChannelConfig {
     pub name: String,
+
     #[serde(rename = "source")]
     pub source_command: String,
-    #[serde(rename = "preview")]
-    pub preview_command: Option<String>,
+
+    #[serde(rename = "preview", default)]
+    pub preview_command: Vec<String>,
+
     #[serde(default = "default_delimiter")]
     #[serde(rename = "delimiter")]
     pub preview_delimiter: Option<String>,
-    #[serde(rename = "run")]
-    pub run_command: Option<String>,
+
+    #[serde(rename = "run", default)]
+    pub run_command: Vec<String>,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -46,9 +50,62 @@ pub type ChannelConfigs = IndexMap<String, ChannelConfig>;
 pub struct Channel {
     pub name: String,
     matcher: Matcher<String>,
-    pub preview_command: PreviewCommand,
-    pub run_command: Option<String>,
+    current_preview_command: usize,
+    current_run_command: usize,
+    pub preview_command: Vec<PreviewCommand>,
+    pub run_command: Vec<String>,
     selected_entries: HashSet<Entry>,
+}
+
+impl Channel {
+    pub fn current_run_command(&self) -> &String {
+        &self.run_command[self.current_run_command]
+    }
+
+    pub fn select_next_run_command(&mut self) {
+        let next = self.select_next_inner(self.current_run_command, self.run_command.len());
+        self.current_run_command = next;
+    }
+
+    pub fn select_prev_run_command(&mut self) {
+        let prev = self.select_prev_inner(self.current_run_command, self.run_command.len());
+        self.current_run_command = prev;
+    }
+
+    pub fn current_preview_command(&self) -> &PreviewCommand {
+        &self.preview_command[self.current_preview_command]
+    }
+
+    pub fn select_next_preview_command(&mut self) {
+        let next = self.select_next_inner(self.current_preview_command, self.preview_command.len());
+        self.current_preview_command = next;
+    }
+
+    pub fn select_prev_preview_command(&mut self) {
+        let prev = self.select_prev_inner(self.current_preview_command, self.preview_command.len());
+        self.current_preview_command = prev;
+    }
+
+    fn select_next_inner(&self, current: usize, n_commands: usize) -> usize {
+        let value = current.saturating_add(1);
+
+        match value < n_commands {
+            true => value,
+            false => 0,
+        }
+    }
+
+    fn select_prev_inner(&self, current: usize, n_commands: usize) -> usize {
+        #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+        {
+            let value = current as isize - 1;
+
+            match value < 0 {
+                true => n_commands - 1,
+                false => value as usize,
+            }
+        }
+    }
 }
 
 impl Default for Channel {
@@ -56,28 +113,32 @@ impl Default for Channel {
         Self::new(
             "Files".to_string(),
             Some("find . -type f".to_string()),
-            PreviewCommand::new("bat -n --color=always {}", ":"),
-            None,
+            vec![PreviewCommand::new("bat -n --color=always {}", ":")],
+            vec![],
         )
     }
 }
 
 impl From<ChannelConfig> for Channel {
     fn from(config: ChannelConfig) -> Self {
-        let command = match &config.preview_command {
-            Some(command) => command,
-            None => &String::new(),
-        };
+        let preview_commands = config
+            .preview_command
+            .iter()
+            .map(|s| {
+                PreviewCommand::new(
+                    s,
+                    &config
+                        .preview_delimiter
+                        .clone()
+                        .unwrap_or(DEFAULT_DELIMITER.to_string()),
+                )
+            })
+            .collect();
 
         Self::new(
             config.name,
             Some(config.source_command),
-            PreviewCommand::new(
-                command,
-                &config
-                    .preview_delimiter
-                    .unwrap_or(DEFAULT_DELIMITER.to_string()),
-            ),
+            preview_commands,
             config.run_command,
         )
     }
@@ -111,8 +172,8 @@ impl Channel {
     pub fn new(
         name: String,
         entries_command: Option<String>,
-        preview_command: PreviewCommand,
-        run_command: Option<String>,
+        preview_command: Vec<PreviewCommand>,
+        run_command: Vec<String>,
     ) -> Self {
         let matcher = Matcher::new(Config::default());
         let injector = matcher.injector();
@@ -129,6 +190,8 @@ impl Channel {
         Self {
             name,
             matcher,
+            current_preview_command: 0,
+            current_run_command: 0,
             preview_command,
             run_command,
             selected_entries: HashSet::with_hasher(FxBuildHasher),
@@ -228,7 +291,7 @@ pub fn load_channels(hide_defaults: bool) -> Result<ChannelConfigs> {
             // Output the error
             match &r {
                 Err(e) => error!("failed to read config: {e:?}"),
-                Ok(_) => debug!("found able channel files: {:?}", r),
+                Ok(v) => debug!("found channel files: {v:?}"),
             }
 
             r.unwrap_or_default().channels

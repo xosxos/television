@@ -15,7 +15,7 @@ use crossterm::event::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Event<I> {
@@ -53,6 +53,10 @@ pub enum Key {
     AltDown,
     AltLeft,
     AltRight,
+    ShiftLeft,
+    ShiftRight,
+    ShiftUp,
+    ShiftDown,
     Home,
     End,
     PageUp,
@@ -94,6 +98,10 @@ impl Display for Key {
             Key::AltDown => write!(f, "Alt-Down"),
             Key::AltLeft => write!(f, "Alt-Left"),
             Key::AltRight => write!(f, "Alt-Right"),
+            Key::ShiftLeft => write!(f, "Shift-Left"),
+            Key::ShiftRight => write!(f, "Shift-Right"),
+            Key::ShiftUp => write!(f, "Shift-Up"),
+            Key::ShiftDown => write!(f, "Shift-Down"),
             Key::Home => write!(f, "Home"),
             Key::End => write!(f, "End"),
             Key::PageUp => write!(f, "PageUp"),
@@ -212,10 +220,10 @@ impl EventLoop {
 }
 
 pub fn convert_raw_event_to_key(event: KeyEvent) -> Key {
-    debug!("Raw event: {:?}", event);
     if event.kind == KeyEventKind::Release {
         return Key::Null;
     }
+
     match event.code {
         Backspace => match event.modifiers {
             KeyModifiers::CONTROL => Key::CtrlBackspace,
@@ -235,21 +243,25 @@ pub fn convert_raw_event_to_key(event: KeyEvent) -> Key {
         Up => match event.modifiers {
             KeyModifiers::CONTROL => Key::CtrlUp,
             KeyModifiers::ALT => Key::AltUp,
+            KeyModifiers::SHIFT => Key::ShiftUp,
             _ => Key::Up,
         },
         Down => match event.modifiers {
             KeyModifiers::CONTROL => Key::CtrlDown,
             KeyModifiers::ALT => Key::AltDown,
+            KeyModifiers::SHIFT => Key::ShiftDown,
             _ => Key::Down,
         },
         Left => match event.modifiers {
             KeyModifiers::CONTROL => Key::CtrlLeft,
             KeyModifiers::ALT => Key::AltLeft,
+            KeyModifiers::SHIFT => Key::ShiftLeft,
             _ => Key::Left,
         },
         Right => match event.modifiers {
             KeyModifiers::CONTROL => Key::CtrlRight,
             KeyModifiers::ALT => Key::AltRight,
+            KeyModifiers::SHIFT => Key::ShiftRight,
             _ => Key::Right,
         },
         Home => Key::Home,

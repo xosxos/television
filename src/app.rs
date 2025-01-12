@@ -144,7 +144,10 @@ impl App {
     async fn convert_event_to_action(&self, event: Event<Key>) -> Action {
         match event {
             Event::Input(keycode) => {
-                info!("{:?} {:?}", keycode, self.television.lock().await.mode);
+                if keycode != Key::CtrlLeft && keycode != Key::CtrlRight {
+                    info!("{:?} {:?}", keycode, self.television.lock().await.mode);
+                }
+
                 // text input events
                 match keycode {
                     Key::Backspace => return Action::DeletePrevChar,
@@ -184,9 +187,10 @@ impl App {
     ///
     async fn handle_actions(&mut self) -> Result<ExitAction> {
         while let Ok(action) = self.action_rx.try_recv() {
-            if action != Action::Tick && action != Action::Render {
+            if ![Action::Tick, Action::Render, Action::ScrollLogUp, Action::ScrollLogDown].contains(&action) {
                 debug!("{action:?}");
             }
+
             match action {
                 Action::Quit => {
                     self.should_quit = true;
@@ -204,13 +208,10 @@ impl App {
                     self.should_quit = true;
                     self.render_tx.send(RenderingTask::Quit)?;
 
-                    info!("select and exit");
-                    // Acquire lock
+                    // Check for command
                     let mut television = self.television.lock().await;
-
-                    let command = television.channel.run_command.clone();
-
-                    if let Some(command) = command {
+                    if !television.channel.run_command.is_empty() {
+                        let command = television.channel.current_run_command();
 
                         let entries: Vec<Entry> = if television.channel
                             .selected_entries()
@@ -235,21 +236,22 @@ impl App {
                         };
 
                         let delimiter = television.channel
-                            .preview_command
+                            .preview_command[0]
                             .delimiter.clone();
-                        info!("run cmd {command}");
 
-                        return Ok(ExitAction::Command(entries, command, delimiter));
-                        // run_command(entries, command, delimiter).await;
+                        // Return command
+                        return Ok(ExitAction::Command(entries, command.clone(), delimiter));
                     };
 
 
                     if let Some(entries) = television
                         .get_selected_entries(Some(Mode::Channel))
                     {
+                        // Return selected entries
                         return Ok(ExitAction::Entries(entries));
                     }
 
+                    // Return selected line
                     return Ok(ExitAction::Input(
                         television.current_pattern.clone(),
                     ));
@@ -279,8 +281,43 @@ impl App {
                 Action::Render => {
                     self.render_tx.send(RenderingTask::Render)?;
                 }
-                _ => {}
+                Action::AddInputChar(_) |
+                Action::DeletePrevChar |
+                Action::DeletePrevWord |
+                Action::DeleteNextChar |
+                Action::GoToPrevChar |
+                Action::GoToNextChar |
+                Action::GoToInputStart |
+                Action::GoToInputEnd |
+                Action::ToggleSelectionDown |
+                Action::ToggleSelectionUp |
+                Action::ConfirmSelection |
+                Action::SelectNextEntry |
+                Action::SelectPrevEntry |
+                Action::SelectNextPage |
+                Action::SelectPrevPage |
+                Action::SelectNextPreview |
+                Action::SelectPrevPreview |
+                Action::SelectNextRun |
+                Action::SelectPrevRun |
+                Action::CopyEntryToClipboard |
+                Action::ScrollPreviewUp |
+                Action::ScrollPreviewDown |
+                Action::ScrollPreviewHalfPageUp |
+                Action::ScrollPreviewHalfPageDown |
+                Action::ScrollLogUp |
+                Action::ScrollLogDown |
+                Action::OpenEntry |
+                Action::Tick |
+                Action::ToggleHelp |
+                Action::ToggleLogs |
+                Action::TogglePreview |
+                Action::Error(_) |
+                Action::NoOp |
+                Action::ToggleRemoteControl |
+                Action::ToggleSendToChannel => {},
             }
+
             // forward action to the television handler
             if let Some(action) =
                 self.television.lock().await.update(&action)?

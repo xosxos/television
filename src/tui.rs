@@ -184,6 +184,7 @@ pub async fn render(
                         }
                         RenderingTask::Render => {
                             let mut television = television.lock().await;
+
                             if let Ok(size) = tui.size() {
                                 // Ratatui uses `u16`s to encode terminal dimensions and its
                                 // content for each terminal cell is stored linearly in a
@@ -193,6 +194,7 @@ pub async fn render(
                                     tui.terminal.draw(|frame| {
                                         if let Err(err) = television.draw(frame, frame.area()) {
                                             warn!("Failed to draw: {:?}", err);
+
                                             let _ = action_tx
                                                 .send(Action::Error(format!("Failed to draw: {err:?}")));
                                         }

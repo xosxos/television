@@ -42,20 +42,13 @@ impl HelpBarLayout {
 pub fn draw_help_bar(
     f: &mut Frame,
     help_bar: &HelpBarLayout,
-    current_channel: &Channel,
+    channel: &Channel,
     keybindings: &KeyBindings,
     mode: Mode,
     app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
-    draw_metadata_block(
-        f,
-        help_bar.left,
-        mode,
-        current_channel,
-        app_metadata,
-        colorscheme,
-    );
+    draw_metadata_block(f, help_bar.left, mode, channel, app_metadata, colorscheme);
 
     let keymap_table = build_keybindings_table(keybindings, colorscheme);
 
@@ -66,7 +59,7 @@ fn draw_metadata_block(
     f: &mut Frame,
     area: Rect,
     _mode: Mode,
-    current_channel: &Channel,
+    channel: &Channel,
     _app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
@@ -77,7 +70,7 @@ fn draw_metadata_block(
         .padding(Padding::horizontal(1))
         .style(Style::default().bg(colorscheme.general.background.unwrap_or_default()));
 
-    let metadata_table = build_metadata_table(current_channel, colorscheme).block(metadata_block);
+    let metadata_table = build_metadata_table(channel, colorscheme).block(metadata_block);
 
     f.render_widget(metadata_table, area);
 }
@@ -100,10 +93,7 @@ fn draw_keymaps_block(
     f.render_widget(table, area);
 }
 
-pub fn build_metadata_table<'a>(
-    current_channel: &'a Channel,
-    colorscheme: &'a Colorscheme,
-) -> Table<'a> {
+pub fn build_metadata_table<'a>(channel: &'a Channel, colorscheme: &'a Colorscheme) -> Table<'a> {
     let build_row = |name: &str, value: String| {
         Row::new([
             Cell::from(Span::styled(
@@ -117,22 +107,43 @@ pub fn build_metadata_table<'a>(
         ])
     };
 
-    let preview_cmd = build_row(
-        "preview cmd: ",
-        current_channel.preview_command.command.clone(),
-    );
+    let build_row_selected = |name: &str, value: String| {
+        Row::new([
+            Cell::from(Span::styled(
+                name.to_string(),
+                Style::default().fg(colorscheme.preview.content_fg),
+            )),
+            Cell::from(Span::styled(
+                value,
+                Style::default().fg(colorscheme.preview.content_fg),
+            )),
+        ])
+    };
 
-    let run_cmd = build_row(
-        "run cmd: ",
-        current_channel.run_command.clone().unwrap_or_default(),
-    );
+    let mut rows = vec![];
 
-    let channel = build_row("current channel: ", current_channel.name.to_string());
+    for (i, cmd) in channel.preview_command.iter().enumerate() {
+        let preview_cmd = match cmd == channel.current_preview_command() {
+            true => build_row_selected(&format!("preview {}: ", i + 1), cmd.command.to_string()),
+            false => build_row(&format!("preview {}: ", i + 1), cmd.command.to_string()),
+        };
+
+        rows.push(preview_cmd);
+    }
+
+    for (i, cmd) in channel.run_command.iter().enumerate() {
+        let preview_cmd = match cmd == channel.current_run_command() {
+            true => build_row_selected(&format!("run {}: ", i + 1), cmd.to_string()),
+            false => build_row(&format!("run {}: ", i + 1), cmd.to_string()),
+        };
+
+        rows.push(preview_cmd);
+    }
 
     // ---------------------- Col 1 ------------- Col 2 ------
     let widths = vec![Constraint::Fill(1), Constraint::Fill(2)];
 
-    Table::new(vec![preview_cmd, run_cmd, channel], widths)
+    Table::new(rows, widths)
 }
 
 pub fn build_keybindings_table<'a>(
@@ -164,13 +175,7 @@ pub fn build_keybindings_table<'a>(
         ],
     );
 
-    let select_entry = build_row(
-        "Select entry",
-        &[
-            keybindings.select_entry.to_string(),
-            keybindings.confirm_selection.to_string(),
-        ],
-    );
+    let select_entry = build_row("Select entry", &[keybindings.confirm_selection.to_string()]);
 
     let send_to_channel = build_row(
         "Send results to",
