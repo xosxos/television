@@ -1569,6 +1569,7 @@ dependencies = [
 name = "television"
 version = "0.9.0"
 dependencies = [
+ "chrono",
  "clap",
  "color-eyre",
  "copypasta",
@@ -1580,6 +1581,7 @@ dependencies = [
  "nom",
  "nucleo",
  "parking_lot",
+ "paste",
  "ratatui",
  "regex",
  "rustc-hash",
@@ -1589,11 +1591,11 @@ dependencies = [
  "smallvec",
  "strum",
  "syntect",
+ "textwrap",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
- "tui-logger",
  "unicode-width 0.2.0",
 ]
 
@@ -1771,17 +1773,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "tui-logger"
-version = "0.14.1"
-dependencies = [
- "chrono",
- "ratatui",
- "textwrap",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

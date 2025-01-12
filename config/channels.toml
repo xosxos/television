@@ -52,14 +52,14 @@ preview = "bat -n --color=always {0}"
 name = "files"
 source = "fd . --type f"
 delimiter = ":"
-preview = "bat {0}"
+preview = "bat {0} --color=always"
 
 [[channel]]
 name = "dirs"
 source = "fd . --type d"
 delimiter = ":"
 preview = "ls -la --color=always {0}"
-run = ""
+run = "echo cd {0}"
 
 
 # GIT

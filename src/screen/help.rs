@@ -1,13 +1,15 @@
 use ratatui::layout::{self, Constraint, Direction, Rect};
 use ratatui::prelude::Style;
+use ratatui::style::Color;
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Table};
 use ratatui::Frame;
 use ratatui::{
-    text::Span,
+    text::{Line, Span},
     widgets::{Cell, Row},
 };
 
 use crate::channel::Channel;
+use crate::config::KeyBindings;
 use crate::screen::colors::{Colorscheme, GeneralColorscheme};
 use crate::television::Mode;
 use crate::utils::AppMetadata;
@@ -37,12 +39,35 @@ impl HelpBarLayout {
     }
 }
 
+pub fn draw_help_bar(
+    f: &mut Frame,
+    help_bar: &HelpBarLayout,
+    current_channel: &Channel,
+    keybindings: &KeyBindings,
+    mode: Mode,
+    app_metadata: &AppMetadata,
+    colorscheme: &Colorscheme,
+) {
+    draw_metadata_block(
+        f,
+        help_bar.left,
+        mode,
+        current_channel,
+        app_metadata,
+        colorscheme,
+    );
+
+    let keymap_table = build_keybindings_table(keybindings, colorscheme);
+
+    draw_keymaps_block(f, help_bar.right, keymap_table, &colorscheme.general);
+}
+
 fn draw_metadata_block(
     f: &mut Frame,
     area: Rect,
-    mode: Mode,
+    _mode: Mode,
     current_channel: &Channel,
-    app_metadata: &AppMetadata,
+    _app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
     let metadata_block = Block::default()
@@ -52,8 +77,7 @@ fn draw_metadata_block(
         .padding(Padding::horizontal(1))
         .style(Style::default().bg(colorscheme.general.background.unwrap_or_default()));
 
-    let metadata_table = build_metadata_table(mode, current_channel, app_metadata, colorscheme)
-        .block(metadata_block);
+    let metadata_table = build_metadata_table(current_channel, colorscheme).block(metadata_block);
 
     f.render_widget(metadata_table, area);
 }
@@ -76,89 +100,132 @@ fn draw_keymaps_block(
     f.render_widget(table, area);
 }
 
-pub fn draw_help_bar(
-    f: &mut Frame,
-    help_bar: &HelpBarLayout,
-    current_channel: &Channel,
-    keymap_table: Table,
-    mode: Mode,
-    app_metadata: &AppMetadata,
-    colorscheme: &Colorscheme,
-) {
-    draw_metadata_block(
-        f,
-        help_bar.left,
-        mode,
-        current_channel,
-        app_metadata,
-        colorscheme,
-    );
-
-    draw_keymaps_block(f, help_bar.right, keymap_table, &colorscheme.general);
-}
-
 pub fn build_metadata_table<'a>(
-    mode: Mode,
-    current_channel: &Channel,
-    app_metadata: &'a AppMetadata,
+    current_channel: &'a Channel,
     colorscheme: &'a Colorscheme,
 ) -> Table<'a> {
-    let version_row = Row::new(vec![
-        Cell::from(Span::styled(
-            "version: ",
-            Style::default().fg(colorscheme.help.metadata_field_name_fg),
-        )),
-        Cell::from(Span::styled(
-            &app_metadata.version,
-            Style::default().fg(colorscheme.help.metadata_field_value_fg),
-        )),
-    ]);
+    let build_row = |name: &str, value: String| {
+        Row::new([
+            Cell::from(Span::styled(
+                name.to_string(),
+                Style::default().fg(colorscheme.help.metadata_field_name_fg),
+            )),
+            Cell::from(Span::styled(
+                value,
+                Style::default().fg(colorscheme.help.metadata_field_value_fg),
+            )),
+        ])
+    };
 
-    let current_dir_row = Row::new(vec![
-        Cell::from(Span::styled(
-            "current directory: ",
-            Style::default().fg(colorscheme.help.metadata_field_name_fg),
-        )),
-        Cell::from(Span::styled(
-            std::env::current_dir()
-                .expect("Could not get current directory")
-                .display()
-                .to_string(),
-            Style::default().fg(colorscheme.help.metadata_field_value_fg),
-        )),
-    ]);
+    let preview_cmd = build_row(
+        "preview cmd: ",
+        current_channel.preview_command.command.clone(),
+    );
 
-    let current_channel_row = Row::new(vec![
-        Cell::from(Span::styled(
-            "current channel: ",
-            Style::default().fg(colorscheme.help.metadata_field_name_fg),
-        )),
-        Cell::from(Span::styled(
-            current_channel.name.to_string(),
-            Style::default().fg(colorscheme.help.metadata_field_value_fg),
-        )),
-    ]);
+    let run_cmd = build_row(
+        "run cmd: ",
+        current_channel.run_command.clone().unwrap_or_default(),
+    );
 
-    let current_mode_row = Row::new(vec![
-        Cell::from(Span::styled(
-            "current mode: ",
-            Style::default().fg(colorscheme.help.metadata_field_name_fg),
-        )),
-        Cell::from(Span::styled(
-            mode.to_string(),
-            Style::default().fg(mode.color(&colorscheme.mode)),
-        )),
-    ]);
+    let channel = build_row("current channel: ", current_channel.name.to_string());
 
+    // ---------------------- Col 1 ------------- Col 2 ------
     let widths = vec![Constraint::Fill(1), Constraint::Fill(2)];
+
+    Table::new(vec![preview_cmd, run_cmd, channel], widths)
+}
+
+pub fn build_keybindings_table<'a>(
+    keybindings: &'a KeyBindings,
+    colorscheme: &'a Colorscheme,
+) -> Table<'a> {
+    let build_row = |name, bindings: &[String]| {
+        Row::new(build_cells_for_group(
+            name,
+            bindings,
+            colorscheme.help.metadata_field_name_fg,
+            colorscheme.mode.channel,
+        ))
+    };
+
+    let results = build_row(
+        "Results nav",
+        &[
+            keybindings.select_next_entry.to_string(),
+            keybindings.select_prev_entry.to_string(),
+        ],
+    );
+
+    let preview = build_row(
+        "Preview nav",
+        &[
+            keybindings.scroll_preview_half_page_down.to_string(),
+            keybindings.scroll_preview_half_page_up.to_string(),
+        ],
+    );
+
+    let select_entry = build_row(
+        "Select entry",
+        &[
+            keybindings.select_entry.to_string(),
+            keybindings.confirm_selection.to_string(),
+        ],
+    );
+
+    let send_to_channel = build_row(
+        "Send results to",
+        &[keybindings.toggle_send_to_channel.to_string()],
+    );
+
+    let switch_channels = build_row(
+        "Toggle Remote control",
+        &[keybindings.toggle_remote_control.to_string()],
+    );
+
+    let copy_entry = build_row("Copy", &[keybindings.copy_entry_to_clipboard.to_string()]);
+
+    // ---------------------------- Col 1 ------------- Col 2 ------
+    let column_widths = vec![Constraint::Fill(1), Constraint::Fill(2)];
 
     Table::new(
         vec![
-            version_row,
-            current_dir_row,
-            current_channel_row,
-            current_mode_row,
+            results,
+            preview,
+            select_entry,
+            copy_entry,
+            send_to_channel,
+            switch_channels,
         ],
-        widths,
+        column_widths,
     )
+}
+
+fn build_cells_for_group<'a>(
+    group_name: &str,
+    keys: &[String],
+    key_color: Color,
+    value_color: Color,
+) -> Vec<Cell<'a>> {
+    // Group name
+    let group_name = group_name.to_owned();
+    let group_name = Cell::from(Span::styled(
+        group_name + ": ",
+        Style::default().fg(key_color),
+    ));
+
+    // Keys
+    let first_key = keys[0].clone();
+    let spans = vec![Span::styled(first_key, Style::default().fg(value_color))];
+
+    let spans = keys.iter().skip(1).fold(spans, |mut acc, key| {
+        let key = key.to_owned();
+
+        acc.push(Span::raw(" / "));
+        acc.push(Span::styled(key, Style::default().fg(value_color)));
+        acc
+    });
+
+    let spans = Cell::from(Line::from(spans));
+
+    vec![group_name, spans]
 }

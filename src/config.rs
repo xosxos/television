@@ -1,7 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 use std::{env, path::PathBuf, sync::LazyLock};
 
-use color_eyre::Result;
+use color_eyre::{eyre::Context, Result};
 use directories::ProjectDirs;
 use rustc_hash::FxHashMap as HashMap;
 use serde::Deserialize;
@@ -57,19 +57,13 @@ pub struct AppConfig {
     pub data_dir: PathBuf,
     #[serde(default)]
     pub config_dir: PathBuf,
-    #[serde(default = "default_frame_rate")]
-    pub frame_rate: f64,
-    #[serde(default = "default_tick_rate")]
-    pub tick_rate: f64,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     #[allow(clippy::struct_field_names)]
     #[serde(default, flatten)]
     pub config: AppConfig,
-    #[serde(default)]
     pub keybindings: KeyBindings,
     #[serde(default)]
     pub styles: Styles,
@@ -88,13 +82,25 @@ pub struct ShellIntegrationConfig {
 pub struct UiConfig {
     pub use_nerd_font_icons: bool,
     pub ui_scale: u16,
+    pub preview_title_position: Option<PreviewTitlePosition>,
     pub show_help_bar: bool,
+    pub show_preview_panel: bool,
+
     #[serde(default)]
     pub show_logs: bool,
-    pub show_preview_panel: bool,
+
+    #[serde(default)]
+    pub show_remote_control: bool,
+
     #[serde(default)]
     pub input_bar_position: InputPosition,
-    pub preview_title_position: Option<PreviewTitlePosition>,
+
+    #[serde(default = "default_frame_rate")]
+    pub frame_rate: f64,
+
+    #[serde(default = "default_tick_rate")]
+    pub tick_rate: f64,
+
     pub theme: String,
 }
 
@@ -106,9 +112,12 @@ impl Default for UiConfig {
             show_help_bar: false,
             show_logs: false,
             show_preview_panel: true,
+            show_remote_control: false,
             input_bar_position: InputPosition::Top,
             preview_title_position: None,
             theme: String::from(DEFAULT_THEME),
+            tick_rate: default_tick_rate(),
+            frame_rate: default_frame_rate(),
         }
     }
 }
@@ -119,7 +128,7 @@ impl Config {
     pub fn new() -> Result<Self> {
         // Load the default_config values as base defaults
         let default_config: Config =
-            toml::from_str(CONFIG).expect("default config should be valid");
+            toml::from_str(CONFIG).wrap_err("error parsing default config")?;
 
         // initialize the config builder
         let data_dir = get_data_dir();
@@ -132,19 +141,19 @@ impl Config {
             debug!("Found config file at {:?}", config_dir);
 
             let path = config_dir.join(CONFIG_FILE_NAME);
-            let contents = std::fs::read_to_string(path).unwrap();
+            let contents = std::fs::read_to_string(&path)?;
 
             let mut cfg: Config =
-                toml::from_str(&contents).expect("default config should be valid");
+                toml::from_str(&contents).wrap_err(format!("error parsing config: {path:?}"))?;
 
-            for (mode, default_bindings) in default_config.keybindings.iter() {
-                let user_bindings = cfg.keybindings.entry(*mode).or_default();
-                for (command, key) in default_bindings {
-                    user_bindings
-                        .entry(command.clone())
-                        .or_insert_with(|| key.clone());
-                }
-            }
+            // for (mode, default_bindings) in default_config.keybindings.iter() {
+            //     let user_bindings = cfg.keybindings.entry(*mode).or_default();
+            //     for (command, key) in default_bindings {
+            //         user_bindings
+            //             .entry(command.clone())
+            //             .or_insert_with(|| key.clone());
+            //     }
+            // }
 
             for (mode, default_styles) in default_config.styles.iter() {
                 let user_styles = cfg.styles.entry(*mode).or_default();

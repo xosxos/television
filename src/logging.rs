@@ -1,10 +1,10 @@
 use std::sync::LazyLock;
 
 use color_eyre::Result;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use tui_logger::{init_tui_logger, TuiTracingSubscriber};
+use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
 use crate::config;
+use crate::logger_widget::{init_tui_logger, TuiTracingSubscriber};
 
 static LOG_FILE: LazyLock<String> = LazyLock::new(|| format!("{}.log", env!("CARGO_PKG_NAME")));
 
@@ -25,9 +25,16 @@ pub fn init() -> Result<()> {
         .with_ansi(false)
         .with_filter(EnvFilter::from_default_env());
 
+    // Filter out logs from dependencies
+    let filter = filter::EnvFilter::builder()
+        .with_default_directive(filter::LevelFilter::DEBUG.into())
+        .from_env()?
+        .add_directive("panic=error".parse()?);
+
     tracing_subscriber::registry()
         .with(file_subscriber)
         .with(TuiTracingSubscriber)
+        .with(filter)
         .try_init()?;
 
     Ok(())

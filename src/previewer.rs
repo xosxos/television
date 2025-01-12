@@ -29,6 +29,10 @@ pub enum PreviewContent {
     AnsiText(String),
 }
 
+pub static COMMAND_PLACEHOLDER_REGEX: LazyLock<Regex> = LazyLock::new(||
+        Regex::new(r"\{(\d+)\}").unwrap()
+);
+
 pub const PREVIEW_NOT_SUPPORTED_MSG: &str = "Preview for this file type is not supported";
 pub const FILE_TOO_LARGE_MSG: &str = "File too large";
 
@@ -150,10 +154,6 @@ impl Previewer {
         self.last_previewed.lock().clone()
     }
 }
-
-static COMMAND_PLACEHOLDER_REGEX: LazyLock<Regex> = LazyLock::new(||
-        Regex::new(r"\{(\d+)\}").unwrap()
-);
 
 /// Format the command with the entry name and provided placeholders
 pub fn format_command(command: &PreviewCommand, entry: &Entry) -> String {

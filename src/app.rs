@@ -6,9 +6,8 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 use crate::channel::{ChannelConfigs, Channel};
-use crate::config::{parse_key, Config};
-use crate::keymap::Keymap;
-use crate::television::Television;
+use crate::config::{Config, KeyBindings};
+use crate::television::{OnAir, Television};
 use crate::{
     action::Action,
     event::{Event, EventLoop, Key},
@@ -19,7 +18,7 @@ use crate::entry::Entry;
 
 // Tui app
 pub struct App {
-    keymap: Keymap,
+    keymap: KeyBindings,
     tick_rate: f64,
     frame_rate: f64,
     /// The television instance that handles channels and entries.
@@ -41,47 +40,19 @@ pub struct App {
 }
 
 #[derive(Debug)]
-pub enum ActionOutcome {
+pub enum ExitAction {
     Entries(Set<Entry>),
     Input(String),
     Passthrough(Set<Entry>, String),
+    Command(Vec<Entry>, String, String),
     None,
-}
-
-#[derive(Debug)]
-pub struct AppOutput {
-    pub selected_entries: Option<Set<Entry>>,
-    pub passthrough: Option<String>,
-}
-
-impl From<ActionOutcome> for AppOutput {
-    fn from(outcome: ActionOutcome) -> Self {
-        match outcome {
-            ActionOutcome::Entries(entries) => Self {
-                selected_entries: Some(entries),
-                passthrough: None,
-            },
-            ActionOutcome::Input(input) => Self {
-                selected_entries: None,
-                passthrough: Some(input),
-            },
-            ActionOutcome::Passthrough(entries, key) => Self {
-                selected_entries: Some(entries),
-                passthrough: Some(key),
-            },
-            ActionOutcome::None => Self {
-                selected_entries: None,
-                passthrough: None,
-            },
-        }
-    }
 }
 
 impl App {
     pub fn new(
         channel: Channel,
         config: Config,
-        passthrough_keybindings: &[String],
+        _passthrough_keybindings: &[String],
         input: Option<String>,
         channels: ChannelConfigs,
     ) -> Result<Self> {
@@ -91,18 +62,14 @@ impl App {
         let (event_abort_tx, _) = mpsc::unbounded_channel();
 
         Ok(Self {
-            keymap: Keymap::from(&config.keybindings).with_mode_mappings(
-                Mode::Channel,
-                passthrough_keybindings
-                    .iter()
-                    .flat_map(|s| match parse_key(s) {
-                        Ok(key) => Ok((key, Action::SelectPassthrough(s.clone()))),
-                        Err(e) => Err(e),
-                    })
-                    .collect(),
-            ).inspect(|v| debug!("{v:?}"))?,
-            tick_rate: config.config.tick_rate,
-            frame_rate: config.config.frame_rate,
+            keymap: config.keybindings.clone(),
+            //     passthrough_keybindings
+            //         .flat_map(|s| match parse_key(s) {
+            //             Ok(key) => Ok((key, Action::SelectPassthrough(s.clone()))),
+            //             Err(e) => Err(e),
+            //         })
+            tick_rate: config.ui.tick_rate,
+            frame_rate: config.ui.frame_rate,
             television: Arc::new(Mutex::new(Television::new(channel, config, input, channels))),
             should_quit: false,
             should_suspend: false,
@@ -120,7 +87,7 @@ impl App {
     /// all actions that are sent to the application.
     /// The function will return the selected entry if the application is exited.
     ///
-    pub async fn run(&mut self, is_output_tty: bool) -> Result<AppOutput> {
+    pub async fn run(&mut self, is_output_tty: bool) -> Result<ExitAction> {
         debug!("Starting backend event loop");
         let event_loop = EventLoop::new(self.tick_rate, true);
         self.event_rx = event_loop.rx;
@@ -155,7 +122,7 @@ impl App {
                 action_tx.send(action)?;
             }
 
-            let action_outcome = self.handle_actions().await?;
+            let exit_action = self.handle_actions().await?;
 
             if self.should_quit {
                 // send a termination signal to the event loop
@@ -164,7 +131,7 @@ impl App {
                 // wait for the rendering task to finish
                 rendering_task.await??;
 
-                return Ok(AppOutput::from(action_outcome));
+                return Ok(exit_action);
             }
         }
     }
@@ -177,7 +144,7 @@ impl App {
     async fn convert_event_to_action(&self, event: Event<Key>) -> Action {
         match event {
             Event::Input(keycode) => {
-                info!("{:?}", keycode);
+                info!("{:?} {:?}", keycode, self.television.lock().await.mode);
                 // text input events
                 match keycode {
                     Key::Backspace => return Action::DeletePrevChar,
@@ -192,10 +159,9 @@ impl App {
                     Key::Char(c) => return Action::AddInputChar(c),
                     _ => {}
                 }
+
                 // get action based on keybindings
-                self.keymap
-                    .get(&self.television.lock().await.mode)
-                    .and_then(|keymap| keymap.get(&keycode).cloned())
+                self.keymap.check_key_for_action(&keycode)
                     .unwrap_or(if let Key::Char(c) = keycode {
                         Action::AddInputChar(c)
                     } else {
@@ -216,7 +182,7 @@ impl App {
     /// This function will handle all actions that are sent to the application.
     /// The function will return the selected entry if the application is exited.
     ///
-    async fn handle_actions(&mut self) -> Result<ActionOutcome> {
+    async fn handle_actions(&mut self) -> Result<ExitAction> {
         while let Ok(action) = self.action_rx.try_recv() {
             if action != Action::Tick && action != Action::Render {
                 debug!("{action:?}");
@@ -237,16 +203,55 @@ impl App {
                 Action::SelectAndExit => {
                     self.should_quit = true;
                     self.render_tx.send(RenderingTask::Quit)?;
-                    if let Some(entries) = self
-                        .television
-                        .lock()
-                        .await
+
+                    info!("select and exit");
+                    // Acquire lock
+                    let mut television = self.television.lock().await;
+
+                    let command = television.channel.run_command.clone();
+
+                    if let Some(command) = command {
+
+                        let entries: Vec<Entry> = if television.channel
+                            .selected_entries()
+                            .is_empty()
+                        {
+                            let entry = television
+                                .results_picker
+                                .selected()
+                                .map(|i| {
+                                    television.channel
+                                        .get_result(i.try_into().unwrap())
+                                        .unwrap()
+                                })
+                                .unwrap();
+                            vec![entry]
+                        } else {
+                            television.channel
+                                .selected_entries()
+                                .iter()
+                                .cloned()
+                                .collect()
+                        };
+
+                        let delimiter = television.channel
+                            .preview_command
+                            .delimiter.clone();
+                        info!("run cmd {command}");
+
+                        return Ok(ExitAction::Command(entries, command, delimiter));
+                        // run_command(entries, command, delimiter).await;
+                    };
+
+
+                    if let Some(entries) = television
                         .get_selected_entries(Some(Mode::Channel))
                     {
-                        return Ok(ActionOutcome::Entries(entries));
+                        return Ok(ExitAction::Entries(entries));
                     }
-                    return Ok(ActionOutcome::Input(
-                        self.television.lock().await.current_pattern.clone(),
+
+                    return Ok(ExitAction::Input(
+                        television.current_pattern.clone(),
                     ));
                 }
                 Action::SelectPassthrough(passthrough) => {
@@ -258,12 +263,12 @@ impl App {
                         .await
                         .get_selected_entries(Some(Mode::Channel))
                     {
-                        return Ok(ActionOutcome::Passthrough(
+                        return Ok(ExitAction::Passthrough(
                             entries,
                             passthrough,
                         ));
                     }
-                    return Ok(ActionOutcome::None);
+                    return Ok(ExitAction::None);
                 }
                 Action::ClearScreen => {
                     self.render_tx.send(RenderingTask::ClearScreen)?;
@@ -278,11 +283,13 @@ impl App {
             }
             // forward action to the television handler
             if let Some(action) =
-                self.television.lock().await.update(action.clone()).await?
+                self.television.lock().await.update(&action)?
             {
                 self.action_tx.send(action)?;
             };
         }
-        Ok(ActionOutcome::None)
+
+        Ok(ExitAction::None)
     }
+
 }

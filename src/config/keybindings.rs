@@ -1,19 +1,94 @@
-use rustc_hash::FxHashMap as HashMap;
 use std::fmt::Display;
-use std::ops::{Deref, DerefMut};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Deserializer};
 
 use crate::action::Action;
 use crate::event::{convert_raw_event_to_key, Key};
-use crate::screen::keybindings::{DisplayableAction, DisplayableKeybindings};
-use crate::television::Mode;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub enum Binding {
     SingleKey(Key),
     MultipleKeys(Vec<Key>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct KeyBindings {
+    pub quit: Binding,
+    pub select_next_entry: Binding,
+    pub select_prev_entry: Binding,
+    pub select_next_page: Binding,
+    pub select_prev_page: Binding,
+    pub toggle_remote_control: Binding,
+    pub toggle_send_to_channel: Binding,
+    pub toggle_help: Binding,
+    pub toggle_logs: Binding,
+    pub toggle_preview: Binding,
+    pub select_entry: Binding,
+    pub scroll_preview_half_page_down: Binding,
+    pub scroll_preview_half_page_up: Binding,
+    pub toggle_selection_down: Binding,
+    pub toggle_selection_up: Binding,
+    pub confirm_selection: Binding,
+    pub copy_entry_to_clipboard: Binding,
+}
+
+macro_rules! impl_keybind {
+    ($name:ident, $k:tt) => {
+        pub fn $name(&self) -> (&Binding, Action) {
+            (&self.$name, Action::$k)
+        }
+    };
+}
+
+impl KeyBindings {
+    #[rustfmt::skip]
+    pub fn check_key_for_action(&self, key: &Key) -> Option<Action> {
+        [
+            self.quit(),
+            self.select_next_entry(),
+            self.select_prev_entry(),
+            self.select_next_page(),
+            self.select_prev_page(),
+            self.toggle_remote_control(),
+            self.toggle_send_to_channel(),
+            self.toggle_help(),
+            self.toggle_logs(),
+            self.toggle_preview(),
+            self.select_entry(),
+            self.scroll_preview_half_page_down(),
+            self.scroll_preview_half_page_up(),
+            self.toggle_selection_down(),
+            self.toggle_selection_up(),
+            self.confirm_selection(),
+            self.copy_entry_to_clipboard(),
+        ]
+        .into_iter()
+        .find_map(|(binding, action)| match binding {
+                Binding::SingleKey(k) => k == key,
+                Binding::MultipleKeys(vec) => vec.contains(key),
+            }
+            .then_some(action)
+        )
+    }
+
+    impl_keybind!(quit, Quit);
+    impl_keybind!(select_next_entry, SelectNextEntry);
+    impl_keybind!(select_prev_entry, SelectPrevEntry);
+    impl_keybind!(select_next_page, SelectNextPage);
+    impl_keybind!(select_prev_page, SelectPrevPage);
+    impl_keybind!(toggle_remote_control, ToggleRemoteControl);
+    impl_keybind!(toggle_send_to_channel, ToggleSendToChannel);
+    impl_keybind!(toggle_help, ToggleHelp);
+    impl_keybind!(toggle_logs, ToggleLogs);
+    impl_keybind!(toggle_preview, TogglePreview);
+    impl_keybind!(select_entry, SelectAndExit);
+    impl_keybind!(scroll_preview_half_page_down, ScrollPreviewHalfPageDown);
+    impl_keybind!(scroll_preview_half_page_up, ScrollPreviewHalfPageUp);
+    impl_keybind!(toggle_selection_down, ToggleSelectionDown);
+    impl_keybind!(toggle_selection_up, ToggleSelectionUp);
+    impl_keybind!(confirm_selection, ConfirmSelection);
+    impl_keybind!(copy_entry_to_clipboard, CopyEntryToClipboard);
 }
 
 impl Display for Binding {
@@ -21,190 +96,47 @@ impl Display for Binding {
         match self {
             Binding::SingleKey(key) => write!(f, "{key}"),
             Binding::MultipleKeys(keys) => {
-                let keys_str: Vec<String> =
-                    keys.iter().map(std::string::ToString::to_string).collect();
-                write!(f, "{}", keys_str.join(", "))
+                let output = keys
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                write!(f, "{output}")
             }
         }
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct KeyBindings(pub HashMap<Mode, HashMap<Action, Binding>>);
-
-impl Deref for KeyBindings {
-    type Target = HashMap<Mode, HashMap<Action, Binding>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for KeyBindings {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl KeyBindings {
-    pub fn to_displayable(&self) -> HashMap<Mode, DisplayableKeybindings> {
-        // channel mode keybindings
-        let channel_bindings: HashMap<DisplayableAction, Vec<String>> = HashMap::from_iter(vec![
-            (
-                DisplayableAction::ResultsNavigation,
-                serialized_keys_for_actions(
-                    self,
-                    &[
-                        Action::SelectPrevEntry,
-                        Action::SelectNextEntry,
-                        Action::SelectPrevPage,
-                        Action::SelectNextPage,
-                    ],
-                ),
-            ),
-            (
-                DisplayableAction::PreviewNavigation,
-                serialized_keys_for_actions(
-                    self,
-                    &[
-                        Action::ScrollPreviewHalfPageUp,
-                        Action::ScrollPreviewHalfPageDown,
-                    ],
-                ),
-            ),
-            (
-                DisplayableAction::SelectEntry,
-                serialized_keys_for_actions(self, &[Action::ConfirmSelection]),
-            ),
-            (
-                DisplayableAction::CopyEntryToClipboard,
-                serialized_keys_for_actions(self, &[Action::CopyEntryToClipboard]),
-            ),
-            (
-                DisplayableAction::SendToChannel,
-                serialized_keys_for_actions(self, &[Action::ToggleSendToChannel]),
-            ),
-            (
-                DisplayableAction::ToggleRemoteControl,
-                serialized_keys_for_actions(self, &[Action::ToggleRemoteControl]),
-            ),
-            (
-                DisplayableAction::ToggleHelpBar,
-                serialized_keys_for_actions(self, &[Action::ToggleHelp]),
-            ),
-        ]);
-
-        // remote control mode keybindings
-        let remote_control_bindings: HashMap<DisplayableAction, Vec<String>> =
-            HashMap::from_iter(vec![
-                (
-                    DisplayableAction::ResultsNavigation,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::SelectPrevEntry, Action::SelectNextEntry],
-                    ),
-                ),
-                (
-                    DisplayableAction::SelectEntry,
-                    serialized_keys_for_actions(self, &[Action::ConfirmSelection]),
-                ),
-                (
-                    DisplayableAction::ToggleRemoteControl,
-                    serialized_keys_for_actions(self, &[Action::ToggleRemoteControl]),
-                ),
-            ]);
-
-        // send to channel mode keybindings
-        let send_to_channel_bindings: HashMap<DisplayableAction, Vec<String>> =
-            HashMap::from_iter(vec![
-                (
-                    DisplayableAction::ResultsNavigation,
-                    serialized_keys_for_actions(
-                        self,
-                        &[Action::SelectPrevEntry, Action::SelectNextEntry],
-                    ),
-                ),
-                (
-                    DisplayableAction::SelectEntry,
-                    serialized_keys_for_actions(self, &[Action::ConfirmSelection]),
-                ),
-                (
-                    DisplayableAction::Cancel,
-                    serialized_keys_for_actions(self, &[Action::ToggleSendToChannel]),
-                ),
-            ]);
-
-        HashMap::from_iter(vec![
-            (Mode::Channel, DisplayableKeybindings::new(channel_bindings)),
-            (
-                Mode::RemoteControl,
-                DisplayableKeybindings::new(remote_control_bindings),
-            ),
-            (
-                Mode::SendToChannel,
-                DisplayableKeybindings::new(send_to_channel_bindings),
-            ),
-        ])
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub enum SerializedBinding {
-    SingleKey(String),
-    MultipleKeys(Vec<String>),
-}
-
-impl<'de> Deserialize<'de> for KeyBindings {
-    fn deserialize<D>(deserializer: D) -> color_eyre::Result<Self, D::Error>
+impl<'de> Deserialize<'de> for Binding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let parsed_map =
-            HashMap::<Mode, HashMap<Action, SerializedBinding>>::deserialize(deserializer)?;
+        let content = <serde::__private::de::Content as Deserialize>::deserialize(deserializer)?;
+        let deserializer = serde::__private::de::ContentRefDeserializer::<D::Error>::new(&content);
 
-        let keybindings = parsed_map
-            .into_iter()
-            .map(|(mode, inner_map)| {
-                let converted_inner_map = inner_map
-                    .into_iter()
-                    .map(|(cmd, binding)| {
-                        (
-                            cmd,
-                            match binding {
-                                SerializedBinding::SingleKey(key_str) => {
-                                    Binding::SingleKey(parse_key(&key_str).unwrap())
-                                }
-                                SerializedBinding::MultipleKeys(keys_str) => Binding::MultipleKeys(
-                                    keys_str
-                                        .iter()
-                                        .map(|key_str| parse_key(key_str).unwrap())
-                                        .collect(),
-                                ),
-                            },
-                        )
+        // Parse SingleKey to String first
+        if let Ok(key) = <String>::deserialize(deserializer) {
+            let key = parse_key(&key).unwrap_or_else(|_| panic!("failed to parse key {key}"));
+            return Ok(Binding::SingleKey(key));
+        }
+
+        // Parse MultipleKey to Vec<String> first
+        if let Ok(keys) = <Vec<String>>::deserialize(deserializer) {
+            return Ok(Binding::MultipleKeys(
+                keys.into_iter()
+                    .map(|key| {
+                        parse_key(&key).unwrap_or_else(|_| panic!("failed to parse key {key}"))
                     })
-                    .collect();
-                (mode, converted_inner_map)
-            })
-            .collect();
+                    .collect(),
+            ));
+        }
 
-        Ok(KeyBindings(keybindings))
+        Err(serde::de::Error::custom(
+            "data did not match any variant of untagged enum Binding",
+        ))
     }
-}
-
-fn serialized_keys_for_actions(keybindings: &KeyBindings, actions: &[Action]) -> Vec<String> {
-    actions
-        .iter()
-        .map(|a| {
-            keybindings
-                .get(&Mode::Channel)
-                .unwrap()
-                .get(a)
-                .unwrap()
-                .clone()
-                .to_string()
-        })
-        .collect()
 }
 
 pub fn parse_key_event(raw: &str) -> color_eyre::Result<KeyEvent, String> {
@@ -287,70 +219,6 @@ fn parse_key_code_with_modifiers(
     Ok(KeyEvent::new(c, modifiers))
 }
 
-#[allow(dead_code)]
-pub fn key_event_to_string(key_event: &KeyEvent) -> String {
-    let char;
-    let key_code = match key_event.code {
-        KeyCode::Backspace => "backspace",
-        KeyCode::Enter => "enter",
-        KeyCode::Left => "left",
-        KeyCode::Right => "right",
-        KeyCode::Up => "up",
-        KeyCode::Down => "down",
-        KeyCode::Home => "home",
-        KeyCode::End => "end",
-        KeyCode::PageUp => "pageup",
-        KeyCode::PageDown => "pagedown",
-        KeyCode::Tab => "tab",
-        KeyCode::BackTab => "backtab",
-        KeyCode::Delete => "delete",
-        KeyCode::Insert => "insert",
-        KeyCode::F(c) => {
-            char = format!("f({c})");
-            &char
-        }
-        KeyCode::Char(' ') => "space",
-        KeyCode::Char(c) => {
-            char = c.to_string();
-            &char
-        }
-        KeyCode::Esc => "esc",
-        KeyCode::Null
-        | KeyCode::CapsLock
-        | KeyCode::Menu
-        | KeyCode::ScrollLock
-        | KeyCode::Media(_)
-        | KeyCode::NumLock
-        | KeyCode::PrintScreen
-        | KeyCode::Pause
-        | KeyCode::KeypadBegin
-        | KeyCode::Modifier(_) => "",
-    };
-
-    let mut modifiers = Vec::with_capacity(3);
-
-    if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-        modifiers.push("ctrl");
-    }
-
-    if key_event.modifiers.intersects(KeyModifiers::SHIFT) {
-        modifiers.push("shift");
-    }
-
-    if key_event.modifiers.intersects(KeyModifiers::ALT) {
-        modifiers.push("alt");
-    }
-
-    let mut key = modifiers.join("-");
-
-    if !key.is_empty() {
-        key.push('-');
-    }
-    key.push_str(key_code);
-
-    key
-}
-
 pub fn parse_key(raw: &str) -> color_eyre::Result<Key, String> {
     if raw.chars().filter(|c| *c == '>').count() != raw.chars().filter(|c| *c == '<').count() {
         return Err(format!("Unable to parse `{raw}`"));
@@ -419,17 +287,6 @@ mod tests {
         assert_eq!(
             parse_key_event("ctrl-shift-enter").unwrap(),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-        );
-    }
-
-    #[test]
-    fn test_reverse_multiple_modifiers() {
-        assert_eq!(
-            key_event_to_string(&KeyEvent::new(
-                KeyCode::Char('a'),
-                KeyModifiers::CONTROL | KeyModifiers::ALT
-            )),
-            "ctrl-alt-a".to_string()
         );
     }
 

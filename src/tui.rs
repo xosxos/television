@@ -168,8 +168,7 @@ pub async fn render(
     debug!("Registering action handler");
     television
         .lock()
-        .await
-        .register_action_handler(action_tx.clone())?;
+        .await.action_tx = Some(action_tx.clone());
 
     // Rendering loop
     loop {

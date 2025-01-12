@@ -1,14 +1,17 @@
 use std::env;
-use std::io::{stdout, BufWriter, IsTerminal, Write};
+use std::io::{stdout, BufWriter, IsTerminal, StdoutLock, Write};
 use std::path::Path;
 use std::process::exit;
 use channel::PreviewCommand;
+use entry::Entry;
+use previewer::COMMAND_PLACEHOLDER_REGEX;
 use rustc_hash::FxHashMap as HashMap;
 
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
 
 use tracing::{debug, error, info};
+use utils::shell_command;
 
 use crate::app::App;
 use crate::config::Config;
@@ -22,8 +25,6 @@ pub mod app;
 pub mod config;
 pub mod errors;
 pub mod event;
-pub mod input;
-pub mod keymap;
 pub mod logging;
 pub mod picker;
 pub mod television;
@@ -36,6 +37,7 @@ pub mod channel;
 pub mod entry;
 pub mod fuzzy;
 pub mod remote_control;
+pub mod logger_widget;
 
 
 #[allow(clippy::unnecessary_wraps)]
@@ -57,6 +59,10 @@ pub struct Cli {
     /// Use a custom preview command (currently only supported by the stdin channel)
     #[arg(short, long, value_name = "STRING")]
     pub preview: Option<String>,
+
+    /// Use a custom run command (currently only supported by the stdin channel)
+    #[arg(short, long = "run", value_name = "STRING")]
+    pub run_command: Option<String>,
 
     /// The delimiter used to extract fields from the entry to provide to the preview command
     /// (defaults to ":")
@@ -165,11 +171,11 @@ async fn main() -> Result<()> {
     // Initiate config
     let mut config = Config::new()?;
 
-    config.config.tick_rate =
-        args.tick_rate.unwrap_or(config.config.tick_rate);
+    config.ui.tick_rate =
+        args.tick_rate.unwrap_or(config.ui.tick_rate);
 
-    config.config.frame_rate =
-        args.frame_rate.unwrap_or(config.config.frame_rate);
+    config.ui.frame_rate =
+        args.frame_rate.unwrap_or(config.ui.frame_rate);
 
     if args.no_preview {
         config.ui.show_preview_panel = false;
@@ -191,7 +197,7 @@ async fn main() -> Result<()> {
         if is_readable_stdin() {
             debug!("Using stdin channel");
 
-            Channel::new(String::from("stdin"), None, preview_command)
+            Channel::new(String::from("stdin"), None, preview_command, args.run_command)
         } else if let Some(prompt) = args.autocomplete_prompt {
             guess_channel_from_prompt(
                 &prompt,
@@ -222,25 +228,35 @@ async fn main() -> Result<()> {
     stdout().flush()?;
 
     // Run the main loop waiting for the final output
-    let output = app.run(stdout().is_terminal()).await?;
+    let exit_action = app.run(stdout().is_terminal()).await?;
 
-    info!("{:?}", output);
+    info!("{:?}", exit_action);
 
     // Write to stdout
     let stdout_handle = stdout().lock();
 
     let mut bufwriter = BufWriter::new(stdout_handle);
 
-    // Passthrough
-    if let Some(passthrough) = output.passthrough {
-        writeln!(bufwriter, "{passthrough}")?;
-    }
+    match exit_action {
+        app::ExitAction::Entries(entries) => {
+            for entry in &entries {
+                writeln!(bufwriter, "{}", entry.stdout_repr())?;
+            }
+        },
+        app::ExitAction::Input(input) => {
+            writeln!(bufwriter, "{input}")?;
+        },
+        app::ExitAction::Passthrough(entries, key) => {
+            writeln!(bufwriter, "{key}")?;
 
-    // Entries
-    if let Some(entries) = output.selected_entries {
-        for entry in &entries {
-            writeln!(bufwriter, "{}", entry.stdout_repr())?;
-        }
+            for entry in &entries {
+                writeln!(bufwriter, "{}", entry.stdout_repr())?;
+            }
+        },
+        app::ExitAction::Command(entries, cmd, delimiter) => {
+            run_command(entries, &cmd, &delimiter, &bufwriter);
+        },
+        app::ExitAction::None => (), 
     }
 
     bufwriter.flush()?;
@@ -249,6 +265,42 @@ async fn main() -> Result<()> {
 
 }
 
+fn run_command(entries: Vec<Entry>, command: &str, delimiter: &str, _bufwriter: &BufWriter<StdoutLock<'_>> ) {
+    for entry in entries {  
+
+        debug!("Computing preview for {:?}", entry.name);
+
+        let parts = entry.name.split(&delimiter).collect::<Vec<&str>>();
+        debug!("Parts: {:?}", parts);
+
+        let mut command = command.replace("{}", &entry.name);
+
+
+        command = COMMAND_PLACEHOLDER_REGEX
+            .replace_all(&command, |caps: &regex::Captures| {
+                let index =
+                    caps.get(1).unwrap().as_str().parse::<usize>().unwrap();
+                parts[index].to_string()
+            })
+            .to_string();
+
+        debug!("Formatted preview command: {:?}", command);
+
+        let output = shell_command()
+            .arg(&command)
+            .output()
+            .expect("failed to execute process");
+
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+
+            println!("{content}");
+            debug!("{content}");
+        } else {
+            tracing::error!("error");
+        }
+    }
+}
 
 pub fn parse_channel(channel: &str, hide_defaults: bool) -> Result<ChannelConfig> {
     channel::load_channels(hide_defaults)

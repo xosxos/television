@@ -4,7 +4,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Padding},
     Frame,
 };
-use tui_logger::LogWidget;
+
+use crate::logger_widget::LogWidget;
 
 use super::colors::Colorscheme;
 

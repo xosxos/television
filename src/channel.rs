@@ -33,7 +33,7 @@ pub struct ChannelConfig {
     #[serde(rename = "delimiter")]
     pub preview_delimiter: Option<String>,
     #[serde(rename = "run")]
-    pub run: Option<String>,
+    pub run_command: Option<String>,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -47,6 +47,7 @@ pub struct Channel {
     pub name: String,
     matcher: Matcher<String>,
     pub preview_command: PreviewCommand,
+    pub run_command: Option<String>,
     selected_entries: HashSet<Entry>,
 }
 
@@ -56,6 +57,7 @@ impl Default for Channel {
             "Files".to_string(),
             Some("find . -type f".to_string()),
             PreviewCommand::new("bat -n --color=always {}", ":"),
+            None,
         )
     }
 }
@@ -76,6 +78,7 @@ impl From<ChannelConfig> for Channel {
                     .preview_delimiter
                     .unwrap_or(DEFAULT_DELIMITER.to_string()),
             ),
+            config.run_command,
         )
     }
 }
@@ -109,6 +112,7 @@ impl Channel {
         name: String,
         entries_command: Option<String>,
         preview_command: PreviewCommand,
+        run_command: Option<String>,
     ) -> Self {
         let matcher = Matcher::new(Config::default());
         let injector = matcher.injector();
@@ -126,6 +130,7 @@ impl Channel {
             name,
             matcher,
             preview_command,
+            run_command,
             selected_entries: HashSet::with_hasher(FxBuildHasher),
         }
     }
