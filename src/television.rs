@@ -41,9 +41,15 @@ pub enum Mode {
     #[serde(rename = "remote_control")]
     #[strum(serialize = "Remote Control")]
     RemoteControl,
-    #[serde(rename = "send_to_channel")]
-    #[strum(serialize = "Send to Channel")]
-    SendToChannel,
+    #[serde(rename = "transition")]
+    #[strum(serialize = "Transition")]
+    Transition,
+    #[serde(rename = "preview")]
+    #[strum(serialize = "Preview")]
+    Preview,
+    #[serde(rename = "run")]
+    #[strum(serialize = "Run")]
+    Run,
 }
 
 impl Mode {
@@ -51,7 +57,9 @@ impl Mode {
         match &self {
             Mode::Channel => colorscheme.channel,
             Mode::RemoteControl => colorscheme.remote_control,
-            Mode::SendToChannel => colorscheme.send_to_channel,
+            Mode::Transition => colorscheme.send_to_channel,
+            Mode::Preview => colorscheme.send_to_channel,
+            Mode::Run => colorscheme.send_to_channel,
         }
     }
 }
@@ -179,7 +187,8 @@ impl Television {
             | Action::GoToPrevChar => {
                 let input = match self.mode {
                     Mode::Channel => &mut self.results_picker.input,
-                    Mode::RemoteControl | Mode::SendToChannel => &mut self.rc_picker.input,
+                    Mode::RemoteControl => &mut self.rc_picker.input,
+                    Mode::Preview | Mode::Transition | Mode::Run => return Ok(Some(Action::NoOp)),
                 };
 
                 let request = match action {
@@ -268,7 +277,7 @@ impl Television {
                         self.reset_picker_selection();
                         self.mode = Mode::Channel;
                     }
-                    Mode::SendToChannel => {}
+                    Mode::Preview | Mode::Transition | Mode::Run => {}
                 }
                 debug!("Mode after toggle: {}", self.mode);
             }
@@ -276,6 +285,7 @@ impl Television {
                 if matches!(self.mode, Mode::Channel) {
                     if let Some(entry) = self.get_selected_entry(None) {
                         self.channel.toggle_selection(&entry);
+                        
                         if matches!(action, Action::ToggleSelectionDown) {
                             self.select_next_entry(1);
                         } else {
@@ -304,20 +314,7 @@ impl Television {
                             self.config.ui.show_remote_control = false;
                         }
                     }
-                    Mode::SendToChannel => {
-                        if let Some(_entry) = self.get_selected_entry(Some(Mode::RemoteControl)) {
-                            self.reset_picker_selection();
-                            self.reset_picker_input();
-                            self.remote_control.find(EMPTY_STRING);
-                            self.mode = Mode::Channel;
-
-                            todo!()
-                            // let new_channel = self.channel.transition_to(
-                            //     entry.name.as_str().try_into().unwrap(),
-                            // );
-                            // self.change_channel(new_channel);
-                        }
-                    }
+                    Mode::Preview | Mode::Transition | Mode::Run => {}
                 }
             }
             Action::CopyEntryToClipboard => {
@@ -337,19 +334,34 @@ impl Television {
                     }
                 }
             }
-            Action::ToggleSendToChannel => match self.mode {
-                Mode::Channel | Mode::RemoteControl => {
-                    self.mode = Mode::SendToChannel;
-                    warn!("Hit toggle send to channel path, remote_control not set");
-                    // self.remote_control = TelevisionChannel::RemoteControl(
-                    // RemoteControl::with_transitions_from(&self.channel),
-                    // );
-                }
-                Mode::SendToChannel => {
-                    self.reset_picker_input();
-                    self.remote_control.find(EMPTY_STRING);
-                    self.reset_picker_selection();
+            Action::ToggleTransition => match self.mode {
+                Mode::Transition => {
+                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
+                    //self.reset_picker_input();
+                    //self.remote_control.find(EMPTY_STRING);
+                    //self.reset_picker_selection();
                     self.mode = Mode::Channel;
+                }
+                _ => {
+                    self.mode = Mode::Transition; 
+                }
+            },
+            Action::TogglePreviewCommands => match self.mode {
+                Mode::Preview => {
+                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
+                    self.mode = Mode::Channel;
+                }
+                _ => {
+                    self.mode = Mode::Preview; 
+                }
+            },
+            Action::ToggleRunCommands => match self.mode {
+                Mode::Run => {
+                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
+                    self.mode = Mode::Channel;
+                }
+                _ => {
+                    self.mode = Mode::Run; 
                 }
             },
             Action::ToggleHelp => {
