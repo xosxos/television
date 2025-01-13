@@ -101,15 +101,19 @@ pub enum Action {
     ToggleLogs,
     /// Toggle the preview panel.
     TogglePreview,
+    // channel actions
+    /// Toggle the remote control channel.
+    ToggleRemoteControl,
+    /// Toggle the `transition` mode.
+    ToggleTransition,
+    /// Toggle the `preview commands` mode.
+    TogglePreviewCommands,
+    /// Toggle the `run commands` mode.
+    ToggleRunCommands,
     /// Signal an error with the given message.
     #[serde(skip)]
     Error(String),
     /// No operation.
     #[serde(skip)]
     NoOp,
-    // channel actions
-    /// Toggle the remote control channel.
-    ToggleRemoteControl,
-    /// Toggle the remote control in `send to channel` mode.
-    ToggleSendToChannel,
 }
