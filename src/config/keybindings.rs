@@ -69,7 +69,9 @@ pub struct KeyBindings {
     pub select_prev_run: Binding,
     pub select_next_run: Binding,
     pub toggle_remote_control: Binding,
-    pub toggle_send_to_channel: Binding,
+    pub toggle_transition: Binding,
+    pub toggle_preview_commands: Binding,
+    pub toggle_run_commands: Binding,
     pub toggle_help: Binding,
     pub toggle_logs: Binding,
     pub toggle_preview: Binding,
@@ -105,7 +107,9 @@ impl KeyBindings {
             self.select_next_run(),
             self.select_prev_run(),
             self.toggle_remote_control(),
-            self.toggle_send_to_channel(),
+            self.toggle_transition(),
+            self.toggle_run_commands(),
+            self.toggle_preview_commands(),
             self.toggle_help(),
             self.toggle_logs(),
             self.toggle_preview(),
@@ -141,7 +145,9 @@ impl KeyBindings {
     impl_binding!(select_next_run, SelectNextRun);
     impl_binding!(select_prev_run, SelectPrevRun);
     impl_binding!(toggle_remote_control, ToggleRemoteControl);
-    impl_binding!(toggle_send_to_channel, ToggleSendToChannel);
+    impl_binding!(toggle_transition, ToggleTransition);
+    impl_binding!(toggle_run_commands, ToggleRunCommand);
+    impl_binding!(toggle_preview_commands, TogglePreviewCommand);
     impl_binding!(toggle_help, ToggleHelp);
     impl_binding!(toggle_logs, ToggleLogs);
     impl_binding!(toggle_preview, TogglePreview);
