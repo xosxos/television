@@ -146,8 +146,8 @@ impl KeyBindings {
     impl_binding!(select_prev_run, SelectPrevRun);
     impl_binding!(toggle_remote_control, ToggleRemoteControl);
     impl_binding!(toggle_transition, ToggleTransition);
-    impl_binding!(toggle_run_commands, ToggleRunCommand);
-    impl_binding!(toggle_preview_commands, TogglePreviewCommand);
+    impl_binding!(toggle_run_commands, ToggleRunCommands);
+    impl_binding!(toggle_preview_commands, TogglePreviewCommands);
     impl_binding!(toggle_help, ToggleHelp);
     impl_binding!(toggle_logs, ToggleLogs);
     impl_binding!(toggle_preview, TogglePreview);
