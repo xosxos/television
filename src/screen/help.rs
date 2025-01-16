@@ -15,12 +15,12 @@ use crate::television::Mode;
 use crate::utils::AppMetadata;
 
 #[derive(Debug, Clone, Copy)]
-pub struct HelpBarLayout {
+pub struct HelpLayout {
     pub left: Rect,
     pub right: Rect,
 }
 
-impl HelpBarLayout {
+impl HelpLayout {
     pub fn new(area: Rect, _show_logo: bool) -> Self {
         //-------------------  metadata ------------ keymaps -------
         let constraints = [Constraint::Fill(1), Constraint::Fill(1)];
@@ -39,20 +39,20 @@ impl HelpBarLayout {
     }
 }
 
-pub fn draw_help_bar(
+pub fn draw_help(
     f: &mut Frame,
-    help_bar: &HelpBarLayout,
+    help: &HelpLayout,
     channel: &Channel,
     keybindings: &KeyBindings,
     mode: Mode,
     app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
 ) {
-    draw_metadata_block(f, help_bar.left, mode, channel, app_metadata, colorscheme);
+    draw_metadata_block(f, help.left, mode, channel, app_metadata, colorscheme);
 
     let keymap_table = build_keybindings_table(keybindings, colorscheme);
 
-    draw_keymaps_block(f, help_bar.right, keymap_table, &colorscheme.general);
+    draw_keymaps_block(f, help.right, keymap_table, &colorscheme.general);
 }
 
 fn draw_metadata_block(
