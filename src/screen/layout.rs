@@ -1,6 +1,6 @@
 use ratatui::layout::{self, Constraint, Direction, Rect};
 
-use crate::screen::help::HelpBarLayout;
+use crate::screen::help::HelpLayout;
 use crate::screen::remote_control::RemoteControlLayout;
 use crate::screen::results::{InputPosition, ResultsLayout};
 
@@ -32,26 +32,26 @@ impl Default for Dimensions {
 }
 
 pub struct Layout {
-    pub help_bar: Option<HelpBarLayout>,
+    pub help: Option<HelpLayout>,
     pub logs: Option<Rect>,
     pub results: ResultsLayout,
-    pub preview_window: Option<Rect>,
+    pub preview: Option<Rect>,
     pub remote_control: Option<RemoteControlLayout>,
 }
 
 impl Layout {
     pub fn new(
-        help_bar: Option<HelpBarLayout>,
+        help: Option<HelpLayout>,
         logs: Option<Rect>,
         results: ResultsLayout,
-        preview_window: Option<Rect>,
+        preview: Option<Rect>,
         remote_control: Option<RemoteControlLayout>,
     ) -> Self {
         Self {
-            help_bar,
+            help,
             logs,
             results,
-            preview_window,
+            preview,
             remote_control,
         }
     }
@@ -60,7 +60,7 @@ impl Layout {
     pub fn build(
         dimensions: &Dimensions,
         area: Rect,
-        with_remote: bool,
+        with_remote_control: bool,
         with_help: bool,
         with_logs: bool,
         with_preview: bool,
@@ -74,7 +74,7 @@ impl Layout {
         let mut help = None;
         let mut logs = None;
         let mut preview = None;
-        let mut remote = None;
+        let mut remote_control = None;
 
         let show_help_logo = false;
         let show_remote_logo = false;
@@ -97,7 +97,7 @@ impl Layout {
             
             let (top, middle, bottom) = (chunks[0], chunks[1], chunks[2]);
             
-            help = Some(HelpBarLayout::new(top, show_help_logo));
+            help = Some(HelpLayout::new(top, show_help_logo));
             main_section = middle;
             logs = Some(bottom);
 
@@ -108,7 +108,7 @@ impl Layout {
             
             let (top, middle) = (chunks[0], chunks[1]);
         
-            help = Some(HelpBarLayout::new(top, show_help_logo));
+            help = Some(HelpLayout::new(top, show_help_logo));
             main_section = middle;
 
         } else if with_logs {
@@ -129,7 +129,7 @@ impl Layout {
         //
         // Main Section: Results, Preview, Remote Control
         //
-        if with_preview && with_remote {
+        if with_preview && with_remote_control {
             // --------------------- Results ----------  Preview ----------- Remote Control -----
             let constraints = [Constraint::Fill(1), Constraint::Fill(1), Constraint::Length(24)].iter();
             let chunks = new_layout(main_section, constraints, Direction::Horizontal); 
@@ -138,7 +138,7 @@ impl Layout {
             
             results = ResultsLayout::new(left, input_position);
             preview = Some(middle);
-            remote = Some(RemoteControlLayout::new(right, show_remote_logo));
+            remote_control = Some(RemoteControlLayout::new(right, show_remote_logo));
 
         } else if with_preview {
             // --------------------- Results ---------------  Preview ---------
@@ -150,7 +150,7 @@ impl Layout {
             results = ResultsLayout::new(left, input_position);
             preview = Some(middle);
 
-        } else if with_remote {
+        } else if with_remote_control {
             // --------------------- Results ------------  Remote Control ------
             let constraints = [Constraint::Fill(1), Constraint::Length(24)].iter();
             let chunks = new_layout(main_section, constraints, Direction::Horizontal);
@@ -158,7 +158,7 @@ impl Layout {
             let (left, right) = (chunks[0], chunks[1]);
             
             results = ResultsLayout::new(left, input_position);
-            remote = Some(RemoteControlLayout::new(right, show_remote_logo));
+            remote_control = Some(RemoteControlLayout::new(right, show_remote_logo));
 
         } else {
             // Draw only the Results
@@ -170,7 +170,7 @@ impl Layout {
             logs,
             results,
             preview,
-            remote,
+            remote_control,
         )
     }
 }
