@@ -487,7 +487,7 @@ impl Television {
             )?;
         }
 
-        // Draw Help Bar
+        // Draw Help
         if let Some(help_area) = &layout.help {
             draw_help(
                 f,
