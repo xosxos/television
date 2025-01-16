@@ -456,7 +456,7 @@ impl Television {
         }
 
         // Draw Preview Content
-        if let Some(preview_window_area) = layout.preview_window {
+        if let Some(preview_area) = layout.preview {
              self.preview_pane_height =
                 layout.preview_window.map_or(0, |preview| preview.height);
 
@@ -488,7 +488,7 @@ impl Television {
         }
 
         // Draw Help Bar
-        if let Some(help_area) = &layout.help_bar {
+        if let Some(help_area) = &layout.help {
             draw_help(
                 f,
                 help_area,
