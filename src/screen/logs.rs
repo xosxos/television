@@ -9,14 +9,12 @@ use crate::logger::LogWidget;
 
 use super::colors::Colorscheme;
 
-pub fn draw_logs_bar(
+pub fn draw_logs(
     frame: &mut Frame,
     area: Rect,
     colorscheme: &Colorscheme,
     scroll: &mut ListState,
 ) {
-    // f.render_widget(p.scroll((preview_scroll, 0)), inner);
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
