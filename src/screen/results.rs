@@ -204,7 +204,7 @@ where
     .block(results_block)
 }
 
-pub fn draw_results_list(
+pub fn draw_results(
     f: &mut Frame,
     rect: Rect,
     entries: &[Entry],
@@ -250,7 +250,7 @@ pub fn draw_results_list(
     Ok(())
 }
 
-pub fn draw_input_box(
+pub fn draw_input(
     f: &mut Frame,
     rect: Rect,
     results_count: u32,
