@@ -14,7 +14,7 @@ use crate::config::{Config, Theme};
 use crate::entry::{Entry, ENTRY_PLACEHOLDER};
 use crate::picker::Picker;
 use crate::previewer::Previewer;
-use crate::screen::logs::draw_logs_bar;
+use crate::screen::logs::draw_logs;
 use crate::utils::input::InputRequest;
 use crate::utils::strings::EMPTY_STRING;
 use crate::utils::AppMetadata;
@@ -22,11 +22,11 @@ use crate::utils::AppMetadata;
 use crate::remote_control::RemoteControl;
 use crate::screen::cache::RenderedPreviewCache;
 use crate::screen::colors::Colorscheme;
-use crate::screen::help::draw_help_bar;
+use crate::screen::help::draw_help;
 use crate::screen::layout::{Dimensions, Layout};
-use crate::screen::preview::draw_preview_content_block;
+use crate::screen::preview::draw_preview;
 use crate::screen::remote_control::draw_remote_control;
-use crate::screen::results::{draw_input_box, draw_results_list, InputPosition};
+use crate::screen::results::{draw_input, draw_results, InputPosition};
 use crate::screen::spinner::{Spinner, SpinnerState};
 
 use serde::{Deserialize, Serialize};
@@ -405,23 +405,7 @@ impl Television {
             self.config.ui.input_bar_position,
         );
 
-        // Draw Help Bar
-        if let Some(help_bar) = &layout.help_bar {
-            draw_help_bar(
-                f,
-                help_bar,
-                self.current_channel(),
-                &self.config.keybindings,
-                self.mode,
-                &self.app_metadata,
-                &self.colorscheme,
-            );
-        }
 
-        // Draw Logs
-        if let Some(logs) = layout.logs {
-            draw_logs_bar(f, logs, &self.colorscheme, &mut self.log_scroll);
-        }
 
         // Draw Results Section
         {
@@ -440,7 +424,7 @@ impl Television {
                 u32::try_from(self.results_picker.offset())?,
             );
 
-            draw_results_list(
+            draw_results(
                 f,
                 layout.results.results,
                 &entries,
@@ -456,7 +440,7 @@ impl Television {
             )?;
 
             // input box
-            draw_input_box(
+            draw_input(
                 f,
                 layout.results.input,
                 result_count,
@@ -471,42 +455,58 @@ impl Television {
             )?;
         }
 
-        if !self.channel.preview_command.is_empty() {
-            // Draw Preview Content
-            if let Some(preview_window) = layout.preview_window {
-                self.preview_pane_height =
-                    layout.preview_window.map_or(0, |preview| preview.height);
+        // Draw Preview Content
+        if let Some(preview_window_area) = layout.preview_window {
+             self.preview_pane_height =
+                layout.preview_window.map_or(0, |preview| preview.height);
 
-                let preview = self
-                    .previewer
-                    .preview(&selected_entry, self.channel.current_preview_command());
+            let preview = self
+                .previewer
+                .preview(&selected_entry, self.channel.current_preview_command());
 
-                self.current_preview_total_lines = preview.total_lines();
+            self.current_preview_total_lines = preview.total_lines();
 
-                // initialize preview scroll
-                self.maybe_init_preview_scroll(
-                    selected_entry
-                        .line_number
-                        .map(|l| u16::try_from(l).unwrap_or(0)),
-                    layout.preview_window.unwrap().height,
-                );
+            // initialize preview scroll
+            self.maybe_init_preview_scroll(
+                selected_entry
+                    .line_number
+                    .map(|l| u16::try_from(l).unwrap_or(0)),
+                layout.preview_window.unwrap().height,
+            );
 
-                draw_preview_content_block(
-                    f,
-                    preview_window,
-                    &selected_entry,
-                    &preview,
-                    &self.rendered_preview_cache,
-                    self.channel.current_preview_command(),
-                    self.preview_scroll.unwrap_or(0),
-                    self.config.ui.use_nerd_font_icons,
-                    &self.colorscheme,
-                )?;
-            }
+            draw_preview(
+                f,
+                preview_window_area,
+                &selected_entry,
+                &preview,
+                &self.rendered_preview_cache,
+                self.channel.current_preview_command(),
+                self.preview_scroll.unwrap_or(0),
+                self.config.ui.use_nerd_font_icons,
+                &self.colorscheme,
+            )?;
+        }
+
+        // Draw Help Bar
+        if let Some(help_area) = &layout.help_bar {
+            draw_help(
+                f,
+                help_area,
+                self.current_channel(),
+                &self.config.keybindings,
+                self.mode,
+                &self.app_metadata,
+                &self.colorscheme,
+            );
+        }
+
+        // Draw Logger
+        if let Some(logs_area) = layout.logs {
+            draw_logs(f, logs_area, &self.colorscheme, &mut self.log_scroll);
         }
 
         // Draw Remote Control
-        if self.config.ui.show_remote_control {
+        if let Some(remote_control_area) = layout.remote_control {
             // NOTE: this should be done in the `update` method
             let result_count = self.remote_control.result_count();
 
@@ -522,7 +522,7 @@ impl Television {
 
             draw_remote_control(
                 f,
-                layout.remote_control.unwrap(),
+                remote_control_area,
                 &entries,
                 self.config.ui.use_nerd_font_icons,
                 &mut self.rc_picker.state,
@@ -532,6 +532,7 @@ impl Television {
                 &self.colorscheme,
             )?;
         }
+        
         Ok(())
     }
 }
