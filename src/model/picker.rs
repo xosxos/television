@@ -1,6 +1,6 @@
 use ratatui::widgets::ListState;
 
-use crate::utils::{input::Input, strings::EMPTY_STRING};
+use crate::{input::Input, strings::EMPTY_STRING};
 
 #[derive(Debug)]
 pub struct Picker {

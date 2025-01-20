@@ -7,14 +7,9 @@ use ratatui::{
 
 use crate::logger::LogWidget;
 
-use super::colors::Colorscheme;
+use crate::colors::Colorscheme;
 
-pub fn draw_logs(
-    frame: &mut Frame,
-    area: Rect,
-    colorscheme: &Colorscheme,
-    scroll: &mut ListState,
-) {
+pub fn draw_logs(frame: &mut Frame, area: Rect, colorscheme: &Colorscheme, scroll: &mut ListState) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

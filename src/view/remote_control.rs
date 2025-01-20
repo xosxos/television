@@ -9,12 +9,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, ListDirection, ListState, Padding, Paragraph};
 use ratatui::Frame;
 
-use crate::entry::Entry;
-
-use crate::screen::colors::Colorscheme;
-use crate::screen::results::build_results_list;
-use crate::television::Mode;
-use crate::utils::input::Input;
+use crate::colors::Colorscheme;
+use crate::model::entry::Entry;
+use crate::model::input::Input;
+use crate::model::television::Mode;
+use crate::view::results::build_results_list;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteControlLayout {

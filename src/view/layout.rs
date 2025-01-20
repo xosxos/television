@@ -1,8 +1,8 @@
 use ratatui::layout::{self, Constraint, Direction, Rect};
 
-use crate::screen::help::HelpLayout;
-use crate::screen::remote_control::RemoteControlLayout;
-use crate::screen::results::{InputPosition, ResultsLayout};
+use crate::view::help::HelpLayout;
+use crate::view::remote_control::RemoteControlLayout;
+use crate::view::results::{InputPosition, ResultsLayout};
 
 // UI size
 const UI_WIDTH_PERCENT: u16 = 95;

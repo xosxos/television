@@ -2,9 +2,6 @@ use std::env;
 use std::io::{stdout, BufWriter, IsTerminal, StdoutLock, Write};
 use std::path::Path;
 use std::process::exit;
-use channel::PreviewCommand;
-use entry::Entry;
-use previewer::COMMAND_PLACEHOLDER_REGEX;
 use rustc_hash::FxHashMap as HashMap;
 
 use clap::{Parser, Subcommand};
@@ -13,31 +10,41 @@ use color_eyre::{Result, eyre::eyre};
 use tracing::{debug, error, info};
 use utils::shell_command;
 
+use channel::PreviewCommand;
+use entry::Entry;
+use previewer::COMMAND_PLACEHOLDER_REGEX;
+use rayon::prelude::*;
+
 use crate::app::App;
 use crate::config::Config;
-use crate::channel::ChannelConfig;
+use crate::channel::{ChannelConfig, RunCommand, TransitionCommand};
 use crate::utils::Shell;
 use crate::utils::{completion_script, is_readable_stdin};
 use crate::channel::Channel;
 
-pub mod action;
 pub mod app;
 pub mod config;
 pub mod init_eyre;
 pub mod init_logging;
 pub mod event;
-pub mod picker;
-pub mod television;
 pub mod tui;
 pub mod ansi;
-pub mod previewer;
-pub mod screen;
+pub mod view;
+pub mod strings;
 pub mod utils;
-pub mod channel;
-pub mod entry;
 pub mod fuzzy;
-pub mod remote_control;
-pub mod logger;
+pub mod model;
+pub mod action;
+pub mod colors;
+
+pub use crate::model::channel;
+pub use crate::model::entry;
+pub use crate::model::previewer;
+pub use crate::model::picker;
+pub use crate::model::television;
+pub use crate::model::input;
+pub use crate::model::remote_control;
+pub use crate::model::logger;
 
 
 #[allow(clippy::unnecessary_wraps)]
@@ -63,6 +70,14 @@ pub struct Cli {
     /// Use a custom run command (currently only supported by the stdin channel)
     #[arg(short, long = "run", value_name = "STRING")]
     pub run_command: Option<String>,
+
+    /// Use a custom run command (currently only supported by the stdin channel)
+    #[arg(long = "transition_command", value_name = "STRING")]
+    pub transition_command: Option<String>,
+
+    /// Use a custom run command (currently only supported by the stdin channel)
+    #[arg(long = "transition_channel", value_name = "STRING")]
+    pub transition_channel: Option<String>,
 
     /// The delimiter used to extract fields from the entry to provide to the preview command
     /// (defaults to ":")
@@ -124,7 +139,8 @@ pub enum SubCommand {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     init_eyre::init()?;
-
+    // color_eyre::install()?;
+    // 
     init_logging::init()?;
 
     let args = Cli::parse();
@@ -152,13 +168,7 @@ async fn main() -> Result<()> {
 
     let channels = channel::load_channels(args.hide_defaults)?;
 
-    let preview_command = args.preview.map(|preview| PreviewCommand {
-            command: preview,
-            delimiter: args.delimiter.clone(),
-        }).unwrap_or(PreviewCommand {
-            command: String::from("echo {}"),
-            delimiter: args.delimiter.clone(),
-        });
+    let preview_command = args.preview.map(|preview| PreviewCommand::new(&preview)).unwrap_or(PreviewCommand::new("echo {}"));
 
     let passthrough_keybindings: Vec<String> = args
             .passthrough_keybindings
@@ -197,9 +207,16 @@ async fn main() -> Result<()> {
         if is_readable_stdin() {
             debug!("Using stdin channel");
 
-            let run_command = args.run_command.map(|v| vec![v]).unwrap_or(vec![]);
+            let run_command = args.run_command.map(|command|
+                    vec![ RunCommand { command, exit: false, remove: vec![] }]
+                ).unwrap_or(vec![]);
 
-            Channel::new(String::from("stdin"), None, vec![preview_command], run_command)
+            let transition_command = match (args.transition_command, args.transition_channel) {
+                (Some(command), Some(channel)) => vec![ TransitionCommand { command, channel } ],
+                _ => vec![],
+            };
+
+            Channel::new(String::from("stdin"), None, vec![preview_command], run_command, transition_command, args.delimiter, None, false)
         } else if let Some(prompt) = args.autocomplete_prompt {
             guess_channel_from_prompt(
                 &prompt,
@@ -267,16 +284,14 @@ async fn main() -> Result<()> {
 
 }
 
-fn run_command(entries: Vec<Entry>, command: &str, delimiter: &str, _bufwriter: &BufWriter<StdoutLock<'_>> ) {
-    for entry in entries {  
+// If a single command, return it to the shell
+// If many commands, run them as subprocesses
+fn run_command(entries: Vec<Entry>, run_command: &RunCommand, delimiter: &str, _bufwriter: &BufWriter<StdoutLock<'_>> ) {
+    if run_command.exit && entries.len() == 1 {
+        let parts = entries[0].name.split(&delimiter).collect::<Vec<&str>>();
 
-        debug!("Computing preview for {:?}", entry.name);
-
-        let parts = entry.name.split(&delimiter).collect::<Vec<&str>>();
-        debug!("Parts: {:?}", parts);
-
-        let mut command = command.replace("{}", &entry.name);
-
+        let command = run_command.command.clone();
+        let mut command = command.replace("{}", &entries[0].name);
 
         command = COMMAND_PLACEHOLDER_REGEX
             .replace_all(&command, |caps: &regex::Captures| {
@@ -286,23 +301,53 @@ fn run_command(entries: Vec<Entry>, command: &str, delimiter: &str, _bufwriter: 
             })
             .to_string();
 
-        debug!("Formatted preview command: {:?}", command);
+        println!("{command}");
+        return
+    }
+
+    run_commands(entries, run_command, delimiter);
+
+}
+// If a single command, return it to the shell
+// If many commands, run them as subprocesses
+fn run_commands(entries: Vec<Entry>, run_command: &RunCommand, delimiter: &str) {
+    entries.into_par_iter().for_each(|entry| {
+    // for entry in entries {
+        let parts = entry.name.split(&delimiter).collect::<Vec<&str>>();
+
+        let command = run_command.command.clone();
+        let mut command = command.replace("{}", &entry.name);
+
+        command = COMMAND_PLACEHOLDER_REGEX
+            .replace_all(&command, |caps: &regex::Captures| {
+                let index =
+                    caps.get(1).unwrap().as_str().parse::<usize>().unwrap();
+                parts[index].to_string()
+            })
+            .to_string();
+
+        // let command = format!("{command}", command);
+
+        debug!("running {command}");
 
         let output = shell_command()
             .arg(&command)
             .output()
             .expect("failed to execute process");
 
+
         if output.status.success() {
             let content = String::from_utf8_lossy(&output.stdout);
 
-            println!("{content}");
-            debug!("{content}");
+            // println!("{content}");
+            debug!("output: {content}");
         } else {
-            tracing::error!("error");
+            error!("error");
         }
-    }
+        // }
+    });
 }
+
 
 pub fn parse_channel(channel: &str, hide_defaults: bool) -> Result<ChannelConfig> {
     channel::load_channels(hide_defaults)

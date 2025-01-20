@@ -12,11 +12,14 @@ use ratatui::Frame;
 use serde::Deserialize;
 use tracing::debug;
 
-use crate::channel::PreviewCommand;
-use crate::previewer::{Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG};
-use crate::screen::cache::RenderedPreviewCache;
-use crate::screen::colors::{Colorscheme, PreviewColorscheme};
-use crate::utils::strings::{
+use crate::model::channel::PreviewCommand;
+use crate::model::previewer::rendered_cache::RenderedPreviewCache;
+use crate::model::previewer::{
+    Preview, PreviewContent, FILE_TOO_LARGE_MSG, PREVIEW_NOT_SUPPORTED_MSG,
+};
+
+use crate::colors::{Colorscheme, PreviewColorscheme};
+use crate::strings::{
     replace_non_printable, shrink_with_ellipsis, ReplaceNonPrintableConfig, EMPTY_STRING,
 };
 use crate::{ansi::IntoText, entry::Entry};
@@ -36,7 +39,7 @@ pub enum PreviewTitlePosition {
     Bottom,
 }
 
-pub fn draw_preview_content_block(
+pub fn draw_preview(
     f: &mut Frame,
     rect: Rect,
     entry: &Entry,
@@ -102,9 +105,11 @@ pub fn draw_preview_content_block(
 
     // Compute cache key
     let mut cache_key = entry.name.clone();
+
     if let Some(line_number) = entry.line_number {
         cache_key.push_str(&line_number.to_string());
     }
+
     cache_key.push_str(&command.command);
 
     // Check if the rendered preview content is already in the cache
@@ -114,9 +119,11 @@ pub fn draw_preview_content_block(
         return Ok(());
     }
 
-    debug!("preview command {}", command.command);
-    debug!("Preview not found in rendered cache");
-    debug!("Cache key: {}", cache_key);
+    debug!(
+        "Preview not {} found in rendered cache, key: {}",
+        command.command, cache_key
+    );
+
     // If not, render the preview content and cache it if not empty
     let c_scheme = colorscheme.clone();
 
@@ -130,7 +137,7 @@ pub fn draw_preview_content_block(
     );
 
     if !preview.stale {
-        debug!("preview was stale and not inserted");
+        debug!("preview not stale, save to rendered preview cache");
 
         rendered_preview_cache
             .lock()

@@ -9,10 +9,11 @@ use ratatui::{
 };
 
 use crate::channel::Channel;
+use crate::colors::{Colorscheme, GeneralColorscheme};
 use crate::config::KeyBindings;
-use crate::screen::colors::{Colorscheme, GeneralColorscheme};
-use crate::television::Mode;
 use crate::utils::AppMetadata;
+
+use crate::model::television::Mode;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HelpLayout {
@@ -58,7 +59,7 @@ pub fn draw_help(
 fn draw_metadata_block(
     f: &mut Frame,
     area: Rect,
-    _mode: Mode,
+    mode: Mode,
     channel: &Channel,
     _app_metadata: &AppMetadata,
     colorscheme: &Colorscheme,
@@ -70,7 +71,7 @@ fn draw_metadata_block(
         .padding(Padding::horizontal(1))
         .style(Style::default().bg(colorscheme.general.background.unwrap_or_default()));
 
-    let metadata_table = build_metadata_table(channel, colorscheme).block(metadata_block);
+    let metadata_table = build_metadata_table(channel, colorscheme, mode).block(metadata_block);
 
     f.render_widget(metadata_table, area);
 }
@@ -93,7 +94,11 @@ fn draw_keymaps_block(
     f.render_widget(table, area);
 }
 
-pub fn build_metadata_table<'a>(channel: &'a Channel, colorscheme: &'a Colorscheme) -> Table<'a> {
+pub fn build_metadata_table<'a>(
+    channel: &'a Channel,
+    colorscheme: &'a Colorscheme,
+    mode: Mode,
+) -> Table<'a> {
     let build_row = |name: &str, value: String| {
         Row::new([
             Cell::from(Span::styled(
@@ -122,26 +127,49 @@ pub fn build_metadata_table<'a>(channel: &'a Channel, colorscheme: &'a Colorsche
 
     let mut rows = vec![];
 
-    for (i, cmd) in channel.preview_command.iter().enumerate() {
-        let preview_cmd = match cmd == channel.current_preview_command() {
-            true => build_row_selected(&format!("preview {}: ", i + 1), cmd.command.to_string()),
-            false => build_row(&format!("preview {}: ", i + 1), cmd.command.to_string()),
-        };
+    if mode == Mode::Preview {
+        for (i, cmd) in channel.preview_command.iter().enumerate() {
+            let preview_cmd = match cmd == channel.current_preview_command() {
+                true => build_row_selected(&format!("{}: ", i + 1), cmd.command.to_string()),
+                false => build_row(&format!("{}: ", i + 1), cmd.command.to_string()),
+            };
 
-        rows.push(preview_cmd);
+            rows.push(preview_cmd);
+        }
     }
 
-    for (i, cmd) in channel.run_command.iter().enumerate() {
-        let preview_cmd = match cmd == channel.current_run_command() {
-            true => build_row_selected(&format!("run {}: ", i + 1), cmd.to_string()),
-            false => build_row(&format!("run {}: ", i + 1), cmd.to_string()),
-        };
+    if mode == Mode::Run {
+        for (i, cmd) in channel.run_command.iter().enumerate() {
+            let preview_cmd = match cmd == channel.current_run_command() {
+                true => build_row_selected(&format!("{}: ", i + 1), cmd.command.to_string()),
+                false => build_row(&format!("{}: ", i + 1), cmd.command.to_string()),
+            };
 
-        rows.push(preview_cmd);
+            rows.push(preview_cmd);
+        }
+    }
+
+    if mode == Mode::Transition {
+        for (i, cmd) in channel.transition_command.iter().enumerate() {
+            let (transition_cmd, transition_to) = (&cmd.command, &cmd.channel);
+
+            let preview_cmd = match cmd == channel.current_transition_command() {
+                true => build_row_selected(
+                    &format!("{transition_to} {}: ", i + 1),
+                    transition_cmd.clone(),
+                ),
+                false => build_row(
+                    &format!("{transition_to} {}: ", i + 1),
+                    transition_cmd.clone(),
+                ),
+            };
+
+            rows.push(preview_cmd);
+        }
     }
 
     // ---------------------- Col 1 ------------- Col 2 ------
-    let widths = vec![Constraint::Fill(1), Constraint::Fill(2)];
+    let widths = vec![Constraint::Fill(1), Constraint::Fill(3)];
 
     Table::new(rows, widths)
 }
@@ -177,9 +205,9 @@ pub fn build_keybindings_table<'a>(
 
     let select_entry = build_row("Select entry", &[keybindings.confirm_selection.to_string()]);
 
-    let send_to_channel = build_row(
+    let transition = build_row(
         "Send results to",
-        &[keybindings.toggle_send_to_channel.to_string()],
+        &[keybindings.toggle_transition.to_string()],
     );
 
     let switch_channels = build_row(
@@ -198,7 +226,7 @@ pub fn build_keybindings_table<'a>(
             preview,
             select_entry,
             copy_entry,
-            send_to_channel,
+            transition,
             switch_channels,
         ],
         column_widths,

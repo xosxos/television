@@ -1,5 +1,3 @@
-pub mod cache;
-pub mod colors;
 pub mod help;
 pub mod layout;
 pub mod logs;

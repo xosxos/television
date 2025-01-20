@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use regex::Regex;
 use tracing::debug;
 
-use crate::channel::PreviewCommand;
+use crate::channel::{Channel, PreviewCommand};
 use crate::entry::Entry;
 
 use crate::utils::shell_command;
@@ -114,8 +114,10 @@ impl Previewer {
     pub fn preview(
         &mut self,
         entry: &Entry,
-        command: &PreviewCommand,
+        channel: &Channel,
     ) -> Arc<Preview> {
+        let command = channel.current_preview_command();
+        let delimiter = &channel.delimiter;
         // do we have a preview in cache for that entry?
         let cache_key = format!("{}{}", entry.name, command.command);
 
@@ -139,11 +141,13 @@ impl Previewer {
             let entry_c = entry.clone();
             let concurrent_tasks = self.concurrent_preview_tasks.clone();
             let command = command.clone();
+            let delimiter = delimiter.clone();
             let last_previewed = self.last_previewed.clone();
 
             tokio::spawn(async move {
                 try_preview(
                     &command,
+                    &delimiter,
                     &entry_c,
                     &cache,
                     &concurrent_tasks,
@@ -159,16 +163,16 @@ impl Previewer {
 }
 
 /// Format the command with the entry name and provided placeholders
-pub fn format_command(command: &PreviewCommand, entry: &Entry) -> String {
-    let parts = entry.name.split(&command.delimiter).collect::<Vec<&str>>();
+pub fn format_command(command: &String, delimiter: &String, entry: &Entry) -> Option<String> {
+    let parts = entry.name.split(delimiter).collect::<Vec<&str>>();
 
     if entry.name.trim().is_empty() {
-        return String::from("error");
+        return None;
     }
 
     debug!("Parts: {:?}", parts);
 
-    let mut formatted_command = command.command.replace("{}", &entry.name);
+    let mut formatted_command = command.replace("{}", &entry.name);
 
     formatted_command = COMMAND_PLACEHOLDER_REGEX
         .replace_all(&formatted_command, |caps: &regex::Captures| {
@@ -178,55 +182,60 @@ pub fn format_command(command: &PreviewCommand, entry: &Entry) -> String {
             if let Some(part) = parts.get(index) { part } else {
                 let count = index + 1;
                 panic!("The entry: {:?} did not have {count} parts\nbut the preview command: {:?}\nrequires {count} parts",
-                    entry.name, command.command
+                    entry.name, command
                 );
             }
         })
         .to_string();
 
-    formatted_command
+    Some(formatted_command)
 }
 
 pub fn try_preview(
-    command: &PreviewCommand,
+    prev_command: &PreviewCommand,
+    delimiter: &String,
     entry: &Entry,
     cache: &Arc<Mutex<PreviewCache>>,
     concurrent_tasks: &Arc<AtomicU8>,
     last_previewed: &Arc<Mutex<Arc<Preview>>>,
 ) {
     debug!("Computing preview for {:?}", entry.name);
-    let command = format_command(command, entry);
-    debug!("Formatted preview command: {:?}", command);
 
-    let output = shell_command()
-        .arg(&command)
-        .output()
-        .expect("failed to execute process");
+    if let Some(command) = format_command(&prev_command.command, delimiter, entry) {
+        debug!("Formatted preview command: {:?}", command);
 
-    if output.status.success() {
-        let content = String::from_utf8_lossy(&output.stdout);
-        let preview = Arc::new(Preview::new(
-            entry.name.clone(),
-            PreviewContent::AnsiText(content.to_string()),
-            None,
-            false,
-        ));
+        let output = shell_command()
+            .arg(&command)
+            .output()
+            .expect("failed to execute process");
 
-        cache.lock().insert(entry.name.clone(), &preview);
-        let mut tp = last_previewed.lock();
-        *tp = preview.stale().into();
-    } else {
-        let content = String::from_utf8_lossy(&output.stderr);
-        let error = format!("error running command: {}\n{}", command, content);
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            let preview = Arc::new(Preview::new(
+                entry.name.clone(),
+                PreviewContent::AnsiText(content.to_string()),
+                None,
+                false,
+            ));
 
-        let preview = Arc::new(Preview::new(
-            entry.name.clone(),
-            PreviewContent::AnsiText(error.to_string()),
-            None,
-            false,
-        ));
+            let cache_key = format!("{}{}", entry.name, prev_command.command);
+            cache.lock().insert(cache_key, &preview);
+            let mut tp = last_previewed.lock();
+            *tp = preview.stale().into();
+        } else {
+            let content = String::from_utf8_lossy(&output.stderr);
+            let error = format!("error running command: {}\n{}", command, content);
 
-        cache.lock().insert(entry.name.clone(), &preview);
+            let preview = Arc::new(Preview::new(
+                entry.name.clone(),
+                PreviewContent::AnsiText(error.to_string()),
+                None,
+                false,
+            ));
+
+            let cache_key = format!("{}{}", entry.name, prev_command.command);
+            cache.lock().insert(cache_key, &preview);
+        }
     }
 
     concurrent_tasks.fetch_sub(1, Ordering::Relaxed);
@@ -240,56 +249,100 @@ mod tests {
 
     #[test]
     fn test_format_command() {
+        let delimiter = ":".to_string();
         let command = PreviewCommand {
             command: "something {} {2} {0}".to_string(),
-            delimiter: ":".to_string(),
         };
         let entry = Entry::new("an:entry:to:preview".to_string());
-        let formatted_command = format_command(&command, &entry);
+        let formatted_command = format_command(&command.command, &delimiter, &entry).unwrap();
 
         assert_eq!(formatted_command, "something an:entry:to:preview to an");
     }
 
     #[test]
     fn test_format_command_no_placeholders() {
+        let delimiter = ":".to_string();
         let command = PreviewCommand {
             command: "something".to_string(),
-            delimiter: ":".to_string(),
         };
         let entry = Entry::new(
             "an:entry:to:preview".to_string(),
         );
-        let formatted_command = format_command(&command, &entry);
+        let formatted_command = format_command(&command.command, &delimiter, &entry).unwrap();
 
         assert_eq!(formatted_command, "something");
     }
 
     #[test]
     fn test_format_command_with_global_placeholder_only() {
+        let delimiter = ":".to_string();
         let command = PreviewCommand {
             command: "something {}".to_string(),
-            delimiter: ":".to_string(),
         };
         let entry = Entry::new(
             "an:entry:to:preview".to_string(),
         );
-        let formatted_command = format_command(&command, &entry);
+        let formatted_command = format_command(&command.command, &delimiter, &entry).unwrap();
 
         assert_eq!(formatted_command, "something an:entry:to:preview");
     }
 
     #[test]
     fn test_format_command_with_positional_placeholders_only() {
+        let delimiter = ":".to_string();
         let command = PreviewCommand {
             command: "something {0} -t {2}".to_string(),
-            delimiter: ":".to_string(),
         };
         let entry = Entry::new(
             "an:entry:to:preview".to_string(),
         );
-        let formatted_command = format_command(&command, &entry);
+        let formatted_command = format_command(&command.command, &delimiter, &entry).unwrap();
 
         assert_eq!(formatted_command, "something an -t to");
+    }
+}
+
+pub mod rendered_cache {
+    use rustc_hash::FxHashMap as HashMap;
+    use std::sync::Arc;
+
+    use ratatui::widgets::Paragraph;
+
+    use crate::previewer::cache::ring_set::RingSet;
+
+    const DEFAULT_RENDERED_PREVIEW_CACHE_SIZE: usize = 25;
+
+    #[derive(Debug)]
+    pub struct RenderedPreviewCache<'a> {
+        previews: HashMap<String, Arc<Paragraph<'a>>>,
+        ring_set: RingSet<String>,
+    }
+
+    impl<'a> RenderedPreviewCache<'a> {
+        pub fn new(capacity: usize) -> Self {
+            RenderedPreviewCache {
+                previews: HashMap::default(),
+                ring_set: RingSet::with_capacity(capacity),
+            }
+        }
+
+        pub fn get(&self, key: &str) -> Option<Arc<Paragraph<'a>>> {
+            self.previews.get(key).cloned()
+        }
+
+        pub fn insert(&mut self, key: String, preview: &Arc<Paragraph<'a>>) {
+            self.previews.insert(key.clone(), preview.clone());
+
+            if let Some(oldest_key) = self.ring_set.push(key) {
+                self.previews.remove(&oldest_key);
+            }
+        }
+    }
+
+    impl Default for RenderedPreviewCache<'_> {
+        fn default() -> Self {
+            RenderedPreviewCache::new(DEFAULT_RENDERED_PREVIEW_CACHE_SIZE)
+        }
     }
 }
 

@@ -1,37 +1,41 @@
 use ratatui::widgets::ListState;
 use rustc_hash::{FxBuildHasher, FxHashMap as HashMap, FxHashSet as HashSet};
+use std::io::{BufRead, BufReader};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use color_eyre::Result;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use ratatui::{layout::Rect, style::Color, Frame};
+use rayon::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::action::Action;
-use crate::channel::{Channel, ChannelConfigs};
+use crate::channel::PreviewCommand;
+use crate::colors::{Colorscheme, ModeColorscheme};
 use crate::config::{Config, Theme};
-use crate::entry::{Entry, ENTRY_PLACEHOLDER};
-use crate::picker::Picker;
-use crate::previewer::Previewer;
-use crate::screen::logs::draw_logs;
-use crate::utils::input::InputRequest;
-use crate::utils::strings::EMPTY_STRING;
-use crate::utils::AppMetadata;
+use crate::previewer::format_command;
+use crate::strings::EMPTY_STRING;
+use crate::utils::{shell_command, AppMetadata};
 
-use crate::remote_control::RemoteControl;
-use crate::screen::cache::RenderedPreviewCache;
-use crate::screen::colors::Colorscheme;
-use crate::screen::help::draw_help;
-use crate::screen::layout::{Dimensions, Layout};
-use crate::screen::preview::draw_preview;
-use crate::screen::remote_control::draw_remote_control;
-use crate::screen::results::{draw_input, draw_results, InputPosition};
-use crate::screen::spinner::{Spinner, SpinnerState};
+use crate::model::channel::{Channel, ChannelConfigs};
+use crate::model::entry::{Entry, ENTRY_PLACEHOLDER};
+use crate::model::input::InputRequest;
+use crate::model::picker::Picker;
+use crate::model::previewer::rendered_cache::RenderedPreviewCache;
+use crate::model::previewer::Previewer;
+use crate::model::remote_control::RemoteControl;
+
+use crate::view::help::draw_help;
+use crate::view::layout::{Dimensions, Layout};
+use crate::view::logs::draw_logs;
+use crate::view::preview::draw_preview;
+use crate::view::remote_control::draw_remote_control;
+use crate::view::results::{draw_input, draw_results, InputPosition};
+use crate::view::spinner::{Spinner, SpinnerState};
 
 use serde::{Deserialize, Serialize};
-
-use crate::screen::colors::ModeColorscheme;
 
 #[derive(PartialEq, Copy, Clone, Hash, Eq, Debug, Serialize, Deserialize, strum::Display)]
 pub enum Mode {
@@ -57,9 +61,7 @@ impl Mode {
         match &self {
             Mode::Channel => colorscheme.channel,
             Mode::RemoteControl => colorscheme.remote_control,
-            Mode::Transition => colorscheme.send_to_channel,
-            Mode::Preview => colorscheme.send_to_channel,
-            Mode::Run => colorscheme.send_to_channel,
+            Mode::Transition | Mode::Preview | Mode::Run => colorscheme.send_to_channel,
         }
     }
 }
@@ -245,8 +247,27 @@ impl Television {
                 self.channel.select_prev_preview_command();
                 self.reset_preview_scroll();
             }
+            Action::SelectPreview(index) => {
+                self.reset_preview_scroll();
+                self.channel.set_current_preview_command(*index);
+            }
+            Action::SelectNextTransition => {
+                self.channel.select_next_transition_command();
+                self.reset_preview_scroll();
+            }
+            Action::SelectPrevTransition => {
+                self.channel.select_prev_transition_command();
+                self.reset_preview_scroll();
+            }
+            Action::SelectTransition(index) => {
+                self.reset_preview_scroll();
+                self.channel.set_current_transition_command(*index);
+            }
             Action::SelectNextRun => self.channel.select_next_run_command(),
             Action::SelectPrevRun => self.channel.select_prev_run_command(),
+            Action::SelectRun(index) => {
+                self.channel.set_current_run_command(*index);
+            }
             Action::ScrollPreviewDown => self.scroll_preview_down(1),
             Action::ScrollPreviewUp => self.scroll_preview_up(1),
             Action::ScrollLogUp => {
@@ -263,6 +284,7 @@ impl Television {
                 self.config.ui.show_remote_control = !self.config.ui.show_remote_control;
 
                 debug!("Mode before toggle: {}", self.mode);
+
                 match self.mode {
                     Mode::Channel => {
                         self.mode = Mode::RemoteControl;
@@ -279,13 +301,14 @@ impl Television {
                     }
                     Mode::Preview | Mode::Transition | Mode::Run => {}
                 }
+
                 debug!("Mode after toggle: {}", self.mode);
             }
             Action::ToggleSelectionDown | Action::ToggleSelectionUp => {
                 if matches!(self.mode, Mode::Channel) {
                     if let Some(entry) = self.get_selected_entry(None) {
                         self.channel.toggle_selection(&entry);
-                        
+
                         if matches!(action, Action::ToggleSelectionDown) {
                             self.select_next_entry(1);
                         } else {
@@ -296,7 +319,7 @@ impl Television {
             }
             Action::ConfirmSelection => {
                 match self.mode {
-                    Mode::Channel => {
+                    Mode::Channel | Mode::Run => {
                         self.action_tx
                             .as_ref()
                             .unwrap()
@@ -314,7 +337,117 @@ impl Television {
                             self.config.ui.show_remote_control = false;
                         }
                     }
-                    Mode::Preview | Mode::Transition | Mode::Run => {}
+                    Mode::Preview => unreachable!(),
+                    Mode::Transition => {
+                        let transition = self.channel.current_transition_command().clone();
+
+                        let channel = self.channels.get(&transition.channel).unwrap().clone();
+
+                        let preview_commands = channel
+                            .preview_command
+                            .iter()
+                            .map(|s| PreviewCommand::new(s))
+                            .collect();
+
+                        let mut lines = if let Some(entries) = self.get_selected_entries(None) {
+                            debug!("perform transition on entries");
+                            println!("perform transition on entries");
+
+                            entries
+                                .par_iter()
+                                .flat_map(|entry| {
+                                    if let Some(command) = format_command(
+                                        &transition.command,
+                                        &channel.delimiter,
+                                        entry,
+                                    ) {
+                                        debug!("Formatted preview command: {:?}", command);
+                                        println!("Formatted preview command: {:?}", command);
+
+                                        let mut child = shell_command()
+                                            .arg(command)
+                                            .stdout(Stdio::piped())
+                                            .stderr(Stdio::piped())
+                                            .spawn()
+                                            .expect("failed to execute process");
+
+                                        let mut lines = vec![];
+                                        if let Some(out) = child.stdout.take() {
+                                            let reader = BufReader::new(out);
+
+                                            for line in reader.lines() {
+                                                let line = line.unwrap();
+
+                                                lines.push(line);
+                                            }
+                                        }
+                                        lines
+                                    } else {
+                                        vec![]
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            debug!("perform transition on singles");
+                            println!("perform transition on singles");
+                            self.channel
+                                .results(1_000_000, 0)
+                                .par_iter()
+                                .flat_map(|entry| {
+                                    if let Some(command) = format_command(
+                                        &transition.command,
+                                        &channel.delimiter,
+                                        entry,
+                                    ) {
+                                        debug!("Formatted preview command: {:?}", command);
+                                        println!("Formatted preview command: {:?}", command);
+
+                                        let mut child = shell_command()
+                                            .arg(command)
+                                            .stdout(Stdio::piped())
+                                            .stderr(Stdio::piped())
+                                            .spawn()
+                                            .expect("failed to execute process");
+
+                                        let mut lines = vec![];
+                                        if let Some(out) = child.stdout.take() {
+                                            let reader = BufReader::new(out);
+
+                                            for line in reader.lines() {
+                                                let line = line.unwrap();
+
+                                                lines.push(line);
+                                            }
+                                        }
+                                        lines
+                                    } else {
+                                        vec![]
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        };
+
+                        lines.sort();
+                        lines.dedup();
+
+                        let new_channel = Channel::new(
+                            channel.name.clone(),
+                            Some(channel.source_command.clone()),
+                            preview_commands,
+                            channel.run_command.clone(),
+                            channel.transition_command.clone(),
+                            channel.delimiter,
+                            Some(lines),
+                            channel.refresh,
+                        );
+
+                        self.channel = new_channel;
+                        self.reset_picker_input();
+                        self.reset_picker_selection();
+                        self.config.ui.show_help_bar = false;
+                        self.mode = Mode::Channel;
+                        println!("finishedd transitioning");
+                    }
                 }
             }
             Action::CopyEntryToClipboard => {
@@ -334,36 +467,33 @@ impl Television {
                     }
                 }
             }
-            Action::ToggleTransition => match self.mode {
-                Mode::Transition => {
-                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
-                    //self.reset_picker_input();
-                    //self.remote_control.find(EMPTY_STRING);
-                    //self.reset_picker_selection();
+            Action::ToggleTransition => {
+                if self.mode == Mode::Transition {
+                    self.config.ui.show_help_bar = false;
                     self.mode = Mode::Channel;
+                } else {
+                    self.config.ui.show_help_bar = true;
+                    self.mode = Mode::Transition;
                 }
-                _ => {
-                    self.mode = Mode::Transition; 
-                }
-            },
-            Action::TogglePreviewCommands => match self.mode {
-                Mode::Preview => {
-                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
+            }
+            Action::TogglePreviewCommands => {
+                if self.mode == Mode::Preview {
+                    self.config.ui.show_help_bar = false;
                     self.mode = Mode::Channel;
+                } else {
+                    self.config.ui.show_help_bar = true;
+                    self.mode = Mode::Preview;
                 }
-                _ => {
-                    self.mode = Mode::Preview; 
-                }
-            },
-            Action::ToggleRunCommands => match self.mode {
-                Mode::Run => {
-                    self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
+            }
+            Action::ToggleRunCommands => {
+                if self.mode == Mode::Run {
+                    self.config.ui.show_help_bar = false;
                     self.mode = Mode::Channel;
+                } else {
+                    self.config.ui.show_help_bar = true;
+                    self.mode = Mode::Run;
                 }
-                _ => {
-                    self.mode = Mode::Run; 
-                }
-            },
+            }
             Action::ToggleHelp => {
                 self.config.ui.show_help_bar = !self.config.ui.show_help_bar;
             }
@@ -404,8 +534,6 @@ impl Television {
             self.config.ui.show_preview_panel && !self.channel.preview_command.is_empty(),
             self.config.ui.input_bar_position,
         );
-
-
 
         // Draw Results Section
         {
@@ -457,12 +585,9 @@ impl Television {
 
         // Draw Preview Content
         if let Some(preview_area) = layout.preview {
-             self.preview_pane_height =
-                layout.preview_window.map_or(0, |preview| preview.height);
+            self.preview_pane_height = layout.preview.map_or(0, |preview| preview.height);
 
-            let preview = self
-                .previewer
-                .preview(&selected_entry, self.channel.current_preview_command());
+            let preview = self.previewer.preview(&selected_entry, &self.channel);
 
             self.current_preview_total_lines = preview.total_lines();
 
@@ -471,12 +596,12 @@ impl Television {
                 selected_entry
                     .line_number
                     .map(|l| u16::try_from(l).unwrap_or(0)),
-                layout.preview_window.unwrap().height,
+                preview_area.height,
             );
 
             draw_preview(
                 f,
-                preview_window_area,
+                preview_area,
                 &selected_entry,
                 &preview,
                 &self.rendered_preview_cache,
@@ -532,7 +657,7 @@ impl Television {
                 &self.colorscheme,
             )?;
         }
-        
+
         Ok(())
     }
 }
@@ -557,11 +682,11 @@ impl Television {
 
     fn find(&mut self, pattern: &str) {
         match self.mode {
-            Mode::Channel => {
-                self.channel.find(pattern);
-            }
-            Mode::RemoteControl | Mode::SendToChannel => {
+            Mode::RemoteControl | Mode::Transition => {
                 self.remote_control.find(pattern);
+            }
+            Mode::Channel | Mode::Run | Mode::Preview => {
+                self.channel.find(pattern);
             }
         }
     }
@@ -569,13 +694,13 @@ impl Television {
     #[must_use]
     pub fn get_selected_entry(&mut self, mode: Option<Mode>) -> Option<Entry> {
         match mode.unwrap_or(self.mode) {
-            Mode::Channel => {
+            Mode::Channel | Mode::Run | Mode::Preview | Mode::Transition => {
                 if let Some(i) = self.results_picker.selected() {
                     return self.channel.get_result(i.try_into().unwrap());
                 }
                 None
             }
-            Mode::RemoteControl | Mode::SendToChannel => {
+            Mode::RemoteControl => {
                 if let Some(i) = self.rc_picker.selected() {
                     return self.remote_control.get_result(i.try_into().unwrap());
                 }
@@ -598,10 +723,10 @@ impl Television {
 
     pub fn select_prev_entry(&mut self, step: u32) {
         let (result_count, picker) = match self.mode {
-            Mode::Channel => (self.channel.result_count(), &mut self.results_picker),
-            Mode::RemoteControl | Mode::SendToChannel => {
-                (self.remote_control.total_count(), &mut self.rc_picker)
+            Mode::Channel | Mode::Run | Mode::Preview | Mode::Transition => {
+                (self.channel.result_count(), &mut self.results_picker)
             }
+            Mode::RemoteControl => (self.remote_control.total_count(), &mut self.rc_picker),
         };
 
         if result_count == 0 {
@@ -617,10 +742,10 @@ impl Television {
 
     pub fn select_next_entry(&mut self, step: u32) {
         let (result_count, picker) = match self.mode {
-            Mode::Channel => (self.channel.result_count(), &mut self.results_picker),
-            Mode::RemoteControl | Mode::SendToChannel => {
-                (self.remote_control.total_count(), &mut self.rc_picker)
+            Mode::Channel | Mode::Run | Mode::Preview | Mode::Transition => {
+                (self.channel.result_count(), &mut self.results_picker)
             }
+            Mode::RemoteControl => (self.remote_control.total_count(), &mut self.rc_picker),
         };
         if result_count == 0 {
             return;
@@ -644,8 +769,10 @@ impl Television {
 
     fn reset_picker_selection(&mut self) {
         match self.mode {
-            Mode::Channel => self.results_picker.reset_selection(),
-            Mode::RemoteControl | Mode::SendToChannel => {
+            Mode::Channel | Mode::Run | Mode::Preview | Mode::Transition => {
+                self.results_picker.reset_selection();
+            }
+            Mode::RemoteControl => {
                 self.rc_picker.reset_selection();
             }
         }
@@ -653,8 +780,10 @@ impl Television {
 
     fn reset_picker_input(&mut self) {
         match self.mode {
-            Mode::Channel => self.results_picker.reset_input(),
-            Mode::RemoteControl | Mode::SendToChannel => {
+            Mode::Channel | Mode::Run | Mode::Preview | Mode::Transition => {
+                self.results_picker.reset_input();
+            }
+            Mode::RemoteControl => {
                 self.rc_picker.reset_input();
             }
         }

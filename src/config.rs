@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap as HashMap;
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::screen::{preview::PreviewTitlePosition, results::InputPosition};
+use crate::view::{preview::PreviewTitlePosition, results::InputPosition};
 
 use styles::Styles;
 use themes::DEFAULT_THEME;

@@ -35,8 +35,8 @@ show_preview_panel = true
 
 [keybindings]
 quit = ["esc", "ctrl-c"]
-select_next_entry = "tab"
-select_prev_entry = "backtab"
+select_next_entry = ["tab", "down"]
+select_prev_entry = ["backtab", "up"]
 select_next_page = "pagedown"
 select_prev_page = "pageup"
 select_next_preview = "ctrl-h"
@@ -46,10 +46,13 @@ select_prev_run = "ctrl-b"
 toggle_remote_control = "ctrl-z"
 toggle_send_to_channel = "ctrl-s"
 toggle_help = "ctrl-g"
+toggle_transition = "ctrl-t"
+toggle_preview_commands = "ctrl-f"
+toggle_run_commands = "ctrl-r"
 toggle_logs = "ctrl-x"
 toggle_preview = "ctrl-o"
-scroll_preview_half_page_down = ["down", "ctrl-d"]
-scroll_preview_half_page_up = ["up", "ctrl-u"]
+scroll_preview_half_page_down = ["ctrl-d"]
+scroll_preview_half_page_up = ["ctrl-u"]
 scroll_log_down = "ctrl-right"
 scroll_log_up = "ctrl-left"
 toggle_selection_down = "shift-down"

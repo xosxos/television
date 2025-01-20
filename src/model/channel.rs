@@ -16,7 +16,7 @@ use crate::utils::shell_command;
 const CABLE_FILE_NAME_SUFFIX: &str = "channels";
 const CABLE_FILE_FORMAT: &str = "toml";
 
-const DEFAULT_CABLE_CHANNELS: &str = include_str!("../config/channels.toml");
+const DEFAULT_CABLE_CHANNELS: &str = include_str!("../../config/channels.toml");
 
 pub const DEFAULT_DELIMITER: &str = " ";
 
@@ -33,16 +33,34 @@ pub struct ChannelConfig {
     pub preview_command: Vec<String>,
 
     #[serde(default = "default_delimiter")]
-    #[serde(rename = "delimiter")]
-    pub preview_delimiter: Option<String>,
+    pub delimiter: String,
 
     #[serde(rename = "run", default)]
-    pub run_command: Vec<String>,
+    pub run_command: Vec<RunCommand>,
+
+    #[serde(rename = "transition", default)]
+    pub transition_command: Vec<TransitionCommand>,
+
+    #[serde(default)]
+    pub refresh: bool,
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn default_delimiter() -> Option<String> {
-    Some(DEFAULT_DELIMITER.to_string())
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct TransitionCommand {
+    pub command: String,
+    pub channel: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct RunCommand {
+    pub command: String,
+    pub exit: bool,
+    #[serde(default)]
+    pub remove: Vec<String>,
+}
+
+fn default_delimiter() -> String {
+    DEFAULT_DELIMITER.to_string()
 }
 
 pub type ChannelConfigs = IndexMap<String, ChannelConfig>;
@@ -50,15 +68,27 @@ pub type ChannelConfigs = IndexMap<String, ChannelConfig>;
 pub struct Channel {
     pub name: String,
     matcher: Matcher<String>,
+    pub delimiter: String,
     current_preview_command: usize,
     current_run_command: usize,
+    current_transition_command: usize,
     pub preview_command: Vec<PreviewCommand>,
-    pub run_command: Vec<String>,
+    pub run_command: Vec<RunCommand>,
+    pub transition_command: Vec<TransitionCommand>,
     selected_entries: HashSet<Entry>,
+    pub refresh: bool,
 }
 
 impl Channel {
-    pub fn current_run_command(&self) -> &String {
+    pub fn set_current_run_command(&mut self, index: usize) {
+        if index >= self.run_command.len() {
+            self.current_run_command = self.run_command.len() - 1;
+        } else {
+            self.current_run_command = index;
+        }
+    }
+
+    pub fn current_run_command(&self) -> &RunCommand {
         &self.run_command[self.current_run_command]
     }
 
@@ -70,6 +100,42 @@ impl Channel {
     pub fn select_prev_run_command(&mut self) {
         let prev = self.select_prev_inner(self.current_run_command, self.run_command.len());
         self.current_run_command = prev;
+    }
+
+    pub fn set_current_transition_command(&mut self, index: usize) {
+        if index >= self.transition_command.len() {
+            self.current_transition_command = self.transition_command.len() - 1;
+        } else {
+            self.current_transition_command = index;
+        }
+    }
+
+    pub fn current_transition_command(&self) -> &TransitionCommand {
+        &self.transition_command[self.current_transition_command]
+    }
+
+    pub fn select_next_transition_command(&mut self) {
+        let next = self.select_next_inner(
+            self.current_transition_command,
+            self.transition_command.len(),
+        );
+        self.current_transition_command = next;
+    }
+
+    pub fn select_prev_transition_command(&mut self) {
+        let prev = self.select_prev_inner(
+            self.current_transition_command,
+            self.transition_command.len(),
+        );
+        self.current_transition_command = prev;
+    }
+
+    pub fn set_current_preview_command(&mut self, index: usize) {
+        if index >= self.preview_command.len() {
+            self.current_preview_command = self.preview_command.len() - 1;
+        } else {
+            self.current_preview_command = index;
+        }
     }
 
     pub fn current_preview_command(&self) -> &PreviewCommand {
@@ -113,8 +179,12 @@ impl Default for Channel {
         Self::new(
             "Files".to_string(),
             Some("find . -type f".to_string()),
-            vec![PreviewCommand::new("bat -n --color=always {}", ":")],
+            vec![PreviewCommand::new("bat -n --color=always {}")],
             vec![],
+            vec![],
+            DEFAULT_DELIMITER.to_string(),
+            None,
+            false,
         )
     }
 }
@@ -124,15 +194,7 @@ impl From<ChannelConfig> for Channel {
         let preview_commands = config
             .preview_command
             .iter()
-            .map(|s| {
-                PreviewCommand::new(
-                    s,
-                    &config
-                        .preview_delimiter
-                        .clone()
-                        .unwrap_or(DEFAULT_DELIMITER.to_string()),
-                )
-            })
+            .map(|s| PreviewCommand::new(s))
             .collect();
 
         Self::new(
@@ -140,6 +202,10 @@ impl From<ChannelConfig> for Channel {
             Some(config.source_command),
             preview_commands,
             config.run_command,
+            config.transition_command,
+            config.delimiter,
+            None,
+            config.refresh,
         )
     }
 }
@@ -147,14 +213,12 @@ impl From<ChannelConfig> for Channel {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
 pub struct PreviewCommand {
     pub command: String,
-    pub delimiter: String,
 }
 
 impl PreviewCommand {
-    pub fn new(command: &str, delimiter: &str) -> Self {
+    pub fn new(command: &str) -> Self {
         Self {
             command: command.to_string(),
-            delimiter: delimiter.to_string(),
         }
     }
 
@@ -164,7 +228,7 @@ impl PreviewCommand {
             _ => "echo {}",
         };
 
-        Self::new(command, DEFAULT_DELIMITER)
+        Self::new(command)
     }
 }
 
@@ -173,28 +237,46 @@ impl Channel {
         name: String,
         entries_command: Option<String>,
         preview_command: Vec<PreviewCommand>,
-        run_command: Vec<String>,
+        run_command: Vec<RunCommand>,
+        transition_command: Vec<TransitionCommand>,
+        delimiter: String,
+        transition_data: Option<Vec<String>>,
+        refresh: bool,
     ) -> Self {
         let matcher = Matcher::new(Config::default());
         let injector = matcher.injector();
 
-        match entries_command {
-            Some(command) => {
-                std::thread::spawn(move || entries_from_shell_process(command, &injector));
+        if let Some(data) = transition_data {
+            for entry in data {
+                // println!("searching entry {entry:?}");
+                injector.push(entry, |e, cols| {
+                    println!("injector callback {e:?} {cols:?}");
+                    cols[0] = e.clone().into();
+                });
             }
-            None => {
-                std::thread::spawn(move || entries_from_stdin(&injector));
+        } else {
+            match entries_command {
+                Some(command) => {
+                    std::thread::spawn(move || entries_from_shell_process(command, &injector));
+                }
+                None => {
+                    std::thread::spawn(move || entries_from_stdin(&injector));
+                }
             }
         }
 
         Self {
             name,
+            delimiter,
             matcher,
             current_preview_command: 0,
             current_run_command: 0,
+            current_transition_command: 0,
             preview_command,
             run_command,
+            transition_command,
             selected_entries: HashSet::with_hasher(FxBuildHasher),
+            refresh,
         }
     }
 }
@@ -296,7 +378,7 @@ pub fn load_channels(hide_defaults: bool) -> Result<ChannelConfigs> {
 
             r.unwrap_or_default().channels
         })
-        .map(|prototype| (prototype.name.clone(), prototype))
+        .map(|config| (config.name.clone(), config))
         .collect::<IndexMap<_, _>>();
 
     if !hide_defaults {

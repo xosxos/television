@@ -22,12 +22,10 @@ source = "fish -c 'history'"
 [[channel]]
 name = "env"
 source = "printenv | sort | sed \"s/=/: /g\""
-delimiter = ":"
 
 [[channel]]
 name = "alias"
 source = "fish -c alias"
-delimiter = ":"
 
 # Processes
 
@@ -36,7 +34,7 @@ name = "ps"
 source = "ps -ax -o pid,command | sed 's/^ * //g' | sed -r 's/ +/;/'"
 delimiter = ";"
 run = [
-  "kill {0}"
+  { command = "kill {0}", exit = false },
 ]
 preview = [
   "echo \"PID: {0}, NAME: {1}\"",
@@ -47,7 +45,6 @@ preview = [
 [[channel]]
 name = "text"
 source = "rg ."
-delimiter = ":"
 preview = [
   "bat -n --color=always {0}",
 ]
@@ -55,29 +52,37 @@ preview = [
 [[channel]]
 name = "files"
 source = "fd . --type f"
-delimiter = ":"
 preview = [
   "bat {0} --color=always",
 ]
+run = [
+  { command = "touch {0}.foo", exit = false },
+]
+transition = [
+  { command = "fish -c \"path dirname {} | sed 's/$/\\//g'\"", channel = "dirs" },
+]
+refresh = true
 
 [[channel]]
 name = "dirs"
-source = 'fd . --type d | sed "s/\/$//g"'
-delimiter = ":"
+source = 'fd . --type d'
 run = [
-  "echo cd {0}",
-  "echo tar -cvf {0}.tar.gz {0}",
+  { command = "cd {0}", exit = true },
+  { command = "tar -cvf archive.tar.gz {0}", exit = false },
 ]
 preview = [
   "ls -lha --color=always {0}",
   "eza -la --color=always {0}",
 ]
+transition = [
+  { command = "ls {} | sd '^' '{}' | sed '$ d'", channel = "files" },
+]
+refresh = true
 
 # GIT
 [[channel]]
 name = "git-repos"
 source = 'fd git ~/ --type d --no-ignore --hidden | rg "\.git/" | rg -v ".cargo|runtime"'
-delimiter = ":"
 preview = [
   "cd {} && git log -n 200 --pretty=medium --all --graph --color",
 ]

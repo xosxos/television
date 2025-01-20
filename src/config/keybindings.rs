@@ -3,8 +3,10 @@ use std::{fmt::Display, ops::Deref};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Deserializer};
+use tracing::debug;
 
 use crate::action::Action;
+use crate::television::Mode;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyEvent(pub crossterm::event::KeyEvent);
@@ -94,7 +96,138 @@ macro_rules! impl_binding {
 }
 
 impl KeyBindings {
-    pub fn check_key_for_action(&self, key: &KeyEvent) -> Option<Action> {
+    pub fn check_key_for_action(&self, key: &KeyEvent, mode: Mode) -> Option<Action> {
+        debug!("{mode}: {key}");
+
+        if mode == Mode::Preview {
+            if let Some(value) = [
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty())),
+                    Action::TogglePreviewCommands,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())),
+                    Action::TogglePreviewCommands,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+                    Action::SelectPrevPreview,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())),
+                    Action::SelectNextPreview,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::empty())),
+                    Action::SelectPreview(0),
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty())),
+                    Action::SelectPreview(1),
+                ),
+            ]
+            .into_iter()
+            .find_map(|(binding, action)| {
+                match binding {
+                    Binding::SingleKey(k) => {
+                        k.0.code == key.0.code && k.0.modifiers == key.0.modifiers
+                    }
+                    Binding::MultipleKeys(vec) => vec
+                        .iter()
+                        .any(|k| k.code == key.code && k.modifiers == key.modifiers),
+                }
+                .then_some(action)
+            }) {
+                return Some(value);
+            }
+        }
+
+        if mode == Mode::Run {
+            if let Some(value) = [
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty())),
+                    Action::ToggleRunCommands,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())),
+                    Action::ConfirmSelection,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+                    Action::SelectPrevRun,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())),
+                    Action::SelectNextRun,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::empty())),
+                    Action::SelectTransition(0),
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty())),
+                    Action::SelectTransition(1),
+                ),
+            ]
+            .into_iter()
+            .find_map(|(binding, action)| {
+                match binding {
+                    Binding::SingleKey(k) => {
+                        k.0.code == key.0.code && k.0.modifiers == key.0.modifiers
+                    }
+                    Binding::MultipleKeys(vec) => vec
+                        .iter()
+                        .any(|k| k.code == key.code && k.modifiers == key.modifiers),
+                }
+                .then_some(action)
+            }) {
+                return Some(value);
+            }
+        }
+
+        if mode == Mode::Transition {
+            if let Some(value) = [
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty())),
+                    Action::ToggleTransition,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())),
+                    Action::ConfirmSelection,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+                    Action::SelectPrevTransition,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())),
+                    Action::SelectNextTransition,
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::empty())),
+                    Action::SelectTransition(0),
+                ),
+                (
+                    &Binding::SingleKey(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty())),
+                    Action::SelectTransition(1),
+                ),
+            ]
+            .into_iter()
+            .find_map(|(binding, action)| {
+                match binding {
+                    Binding::SingleKey(k) => {
+                        k.0.code == key.0.code && k.0.modifiers == key.0.modifiers
+                    }
+                    Binding::MultipleKeys(vec) => vec
+                        .iter()
+                        .any(|k| k.code == key.code && k.modifiers == key.modifiers),
+                }
+                .then_some(action)
+            }) {
+                return Some(value);
+            }
+        }
+
         // Could be mapped to get O(1), but I don't think it matters much
         [
             self.quit(),

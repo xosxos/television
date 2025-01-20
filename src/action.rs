@@ -61,10 +61,21 @@ pub enum Action {
     SelectNextPreview,
     /// Select the previous preview command.
     SelectPrevPreview,
+    /// Select the previous preview command.
+    SelectPreview(usize),
     /// Select the next run command.
     SelectNextRun,
     /// Select the previous run command.
     SelectPrevRun,
+    /// Select the previous preview command.
+    SelectRun(usize),
+    /// Select the next preview command.
+    SelectNextTransition,
+    /// Select the previous preview command.
+    SelectPrevTransition,
+    /// Select the previous preview command.
+    SelectTransition(usize),
+    /// Select the next run command.
     /// Copy the currently selected entry to the clipboard.
     CopyEntryToClipboard,
     // preview actions

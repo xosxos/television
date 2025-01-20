@@ -6,8 +6,9 @@ use color_eyre::Result;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
-use crate::channel::{ChannelConfigs, Channel};
+use crate::channel::{Channel, ChannelConfigs, RunCommand};
 use crate::config::{Config, KeyBindings, KeyEvent};
+use crate::run_commands;
 use crate::television::{OnAir, Television};
 use crate::{
     action::Action,
@@ -45,7 +46,7 @@ pub enum ExitAction {
     Entries(Set<Entry>),
     Input(String),
     Passthrough(Set<Entry>, String),
-    Command(Vec<Entry>, String, String),
+    Command(Vec<Entry>, RunCommand, String),
     None,
 }
 
@@ -147,6 +148,8 @@ impl App {
             Event::Input(keycode) => {
                 let key = *keycode;
 
+                let mode = self.television.lock().await.mode;
+
                 if matches!(key.modifiers, KeyModifiers::CONTROL) && [KeyCode::Left, KeyCode::Right].contains(&key.code) { 
                     info!("{:?} {:?}", keycode, self.television.lock().await.mode);
                 }
@@ -160,12 +163,12 @@ impl App {
                     (KeyModifiers::NONE, KeyCode::Delete) => return Action::DeleteNextChar,
                     (KeyModifiers::NONE, KeyCode::Left) => return Action::GoToPrevChar,
                     (KeyModifiers::NONE, KeyCode::Right) => return Action::GoToNextChar,
-                    (KeyModifiers::NONE, KeyCode::Char(c)) => return Action::AddInputChar(c),
+                    // (KeyModifiers::NONE, KeyCode::Char(c)) => return Action::AddInputChar(c),
                     _ => {}
                 }
 
                 // get action based on keybindings
-                self.keymap.check_key_for_action(&keycode)
+                self.keymap.check_key_for_action(&keycode, mode)
                     .unwrap_or(if let KeyCode::Char(c) = key.code {
                         Action::AddInputChar(c)
                     } else {
@@ -206,8 +209,6 @@ impl App {
                     self.render_tx.send(RenderingTask::Resume)?;
                 }
                 Action::SelectAndExit => {
-                    self.should_quit = true;
-                    self.render_tx.send(RenderingTask::Quit)?;
 
                     // Check for command
                     let mut television = self.television.lock().await;
@@ -237,13 +238,30 @@ impl App {
                         };
 
                         let delimiter = television.channel
-                            .preview_command[0]
                             .delimiter.clone();
 
-                        // Return command
-                        return Ok(ExitAction::Command(entries, command.clone(), delimiter));
+                        // Exit application
+                        if command.exit {
+                            self.should_quit = true;
+                            self.render_tx.send(RenderingTask::Quit)?;
+
+                            return Ok(ExitAction::Command(entries, command.clone(), delimiter));
+                        }
+                        debug!("run commnads");
+
+                        run_commands(entries, command, &delimiter);
+
+                        if television.channel.refresh {
+
+                            let channel = television.channels.get(&television.channel.name).unwrap().clone();
+                            television.channel = channel.into();
+
+                        }
+                        return Ok(ExitAction::None)
                     };
 
+                    self.should_quit = true;
+                    self.render_tx.send(RenderingTask::Quit)?;
 
                     if let Some(entries) = television
                         .get_selected_entries(Some(Mode::Channel))
@@ -299,8 +317,13 @@ impl App {
                 Action::SelectPrevPage |
                 Action::SelectNextPreview |
                 Action::SelectPrevPreview |
+                Action::SelectPreview(_) |
                 Action::SelectNextRun |
                 Action::SelectPrevRun |
+                Action::SelectRun(_) |
+                Action::SelectNextTransition |
+                Action::SelectPrevTransition |
+                Action::SelectTransition(_) |
                 Action::CopyEntryToClipboard |
                 Action::ScrollPreviewUp |
                 Action::ScrollPreviewDown |
@@ -316,7 +339,9 @@ impl App {
                 Action::Error(_) |
                 Action::NoOp |
                 Action::ToggleRemoteControl |
-                Action::ToggleSendToChannel => {},
+                Action::TogglePreviewCommands |
+                Action::ToggleRunCommands |
+                Action::ToggleTransition => {},
             }
 
             // forward action to the television handler

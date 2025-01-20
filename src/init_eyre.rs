@@ -9,7 +9,7 @@ pub fn init() -> Result<()> {
             "This is a bug. Consider reporting it at {}",
             env!("CARGO_PKG_REPOSITORY")
         ))
-        .capture_span_trace_by_default(false)
+        .capture_span_trace_by_default(true)
         .display_env_section(false)
         .into_hooks();
 

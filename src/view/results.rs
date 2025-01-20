@@ -11,15 +11,14 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListDirection, ListState, Padding};
 use ratatui::Frame;
 
-use crate::entry::Entry;
-use crate::screen::colors::{Colorscheme, ResultsColorscheme};
-use crate::utils::input::Input;
-use crate::utils::strings::{
-    make_matched_string_printable, next_char_boundary, slice_at_char_boundaries,
-};
+use crate::model::entry::Entry;
+use crate::model::input::Input;
+
+use crate::colors::{Colorscheme, ResultsColorscheme};
+use crate::strings::{make_matched_string_printable, next_char_boundary, slice_at_char_boundaries};
 use crate::{
-    screen::spinner::{Spinner, SpinnerState},
     utils::AppMetadata,
+    view::spinner::{Spinner, SpinnerState},
 };
 
 const POINTER_SYMBOL: &str = "> ";

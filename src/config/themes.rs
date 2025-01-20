@@ -7,7 +7,7 @@ use color_eyre::Result;
 use ratatui::style::Color as RatatuiColor;
 use serde::Deserialize;
 
-use crate::screen::colors::{
+use crate::colors::{
     Colorscheme, GeneralColorscheme, HelpColorscheme, InputColorscheme, ModeColorscheme,
     PreviewColorscheme, ResultsColorscheme,
 };
