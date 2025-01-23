@@ -8,24 +8,16 @@ use ratatui::text::Text;
 
 /// `IntoText` will convert any type that has a `AsRef<[u8]>` to a Text.
 pub trait IntoText {
-    /// Convert the type to a Text.
-    #[allow(clippy::wrong_self_convention)]
-    fn into_text(&self) -> Result<Text<'static>, Error>;
-    /// Convert the type to a Text while trying to copy as less as possible
-    #[cfg(feature = "zero-copy")]
     fn to_text(&self) -> Result<Text<'_>, Error>;
 }
+
 impl<T> IntoText for T
 where
     T: AsRef<[u8]>,
 {
-    fn into_text(&self) -> Result<Text<'static>, Error> {
-        Ok(crate::ansi::parser::text(self.as_ref())?.1)
-    }
-
-    #[cfg(feature = "zero-copy")]
     fn to_text(&self) -> Result<Text<'_>, Error> {
-        Ok(crate::ansi::parser::text_fast(self.as_ref())?.1)
+        let (_bytes, text) = crate::ansi::parser::text(self.as_ref());
+        Ok(text)
     }
 }
 
@@ -53,9 +45,7 @@ pub mod parser {
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
     enum ColorType {
-        /// Eight Bit color
         EightBit,
-        /// 24-bit color or true color
         TrueColor,
     }
 
@@ -121,166 +111,91 @@ pub mod parser {
         }
     }
 
-    #[allow(clippy::unnecessary_wraps)]
-    pub(crate) fn text(mut s: &[u8]) -> IResult<&[u8], Text<'static>> {
-        let mut lines = Vec::new();
-        let mut last_style = Style::new();
-        while let Ok((remaining, (line, style))) = line(last_style)(s) {
-            lines.push(line);
-            last_style = style;
-            s = remaining;
-            if s.is_empty() {
-                break;
-            }
-        }
-        Ok((s, Text::from(lines)))
-    }
-
-    #[cfg(feature = "zero-copy")]
-    #[allow(clippy::unnecessary_wraps)]
-    pub(crate) fn text_fast(mut s: &[u8]) -> IResult<&[u8], Text<'_>> {
+    pub(crate) fn text(mut bytes: &[u8]) -> (&[u8], Text<'_>) {
         let mut lines = Vec::new();
         let mut last = Style::new();
-        while let Ok((c, (line, style))) = line_fast(last)(s) {
+        
+        while let Ok((remaining_bytes, (line, style))) = line(last, bytes) {
             lines.push(line);
             last = style;
-            s = c;
-            if s.is_empty() {
+            bytes = remaining_bytes;
+            if remaining_bytes.is_empty() {
                 break;
             }
         }
-        Ok((s, Text::from(lines)))
+        
+        (bytes, Text::from(lines))
     }
 
-    fn line(style: Style) -> impl Fn(&[u8]) -> IResult<&[u8], (Line<'static>, Style)> {
-        // let style_: Style = Default::default();
-        move |s: &[u8]| -> IResult<&[u8], (Line<'static>, Style)> {
-            // consume s until a line ending is found
-            let (s, mut text) = not_line_ending(s)?;
-            // discard the line ending
-            let (s, _) = opt(alt((tag("\r\n"), tag("\n"))))(s)?;
-            let mut spans = Vec::new();
-            // carry over the style from the previous line (passed in as an argument)
-            let mut last_style = style;
-            // parse spans from the given text
-            while let Ok((remaining, span)) = span(last_style)(text) {
-                // Since reset now tracks separately we can skip the reset check
-                last_style = last_style.patch(span.style);
-
-                if !span.content.is_empty() {
-                    spans.push(span);
-                }
-                text = remaining;
-                if text.is_empty() {
-                    break;
-                }
+    fn line(style: Style, bytes: &[u8]) -> IResult<&[u8], (Line<'_>, Style)> {
+        let (bytes, mut span_bytes) = not_line_ending(bytes)?;
+        let (bytes, _) = opt(alt((tag("\r\n"), tag("\n"))))(bytes)?;
+        let mut spans = Vec::new();
+        let mut last = style;
+            
+        while let Ok((remaining_bytes, span)) = span(last, span_bytes) {
+            last = last.patch(span.style);
+            // If the spans is empty then it might be possible that the style changes
+            // but there is no text change
+            if !span.content.is_empty() {
+                spans.push(span);
             }
-
-            // NOTE: what is last_style here
-            Ok((s, (Line::from(spans), last_style)))
-        }
-    }
-
-    #[cfg(feature = "zero-copy")]
-    fn line_fast(style: Style) -> impl Fn(&[u8]) -> IResult<&[u8], (Line<'_>, Style)> {
-        // let style_: Style = Default::default();
-        move |s: &[u8]| -> IResult<&[u8], (Line<'_>, Style)> {
-            let (s, mut text) = not_line_ending(s)?;
-            let (s, _) = opt(alt((tag("\r\n"), tag("\n"))))(s)?;
-            let mut spans = Vec::new();
-            let mut last = style;
-            while let Ok((s, span)) = span_fast(last)(text) {
-                last = last.patch(span.style);
-                // If the spans is empty then it might be possible that the style changes
-                // but there is no text change
-                if !span.content.is_empty() {
-                    spans.push(span);
-                }
-                text = s;
-                if text.is_empty() {
-                    break;
-                }
+            
+            remaining_bytes.is_empty() {
+                break,
             }
-
-            Ok((s, (Line::from(spans), last)))
         }
+
+        Ok((bytes, (Line::from(spans), last)))
     }
 
     fn span(
-        last: Style,
-    ) -> impl Fn(&[u8]) -> IResult<&[u8], Span<'static>, nom::error::Error<&[u8]>> {
-        move |s: &[u8]| -> IResult<&[u8], Span<'static>> {
-            let mut last_style = last;
-            // optionally consume a style
-            let (s, maybe_style) = opt(style(last_style))(s)?;
-
-            // consume until an escape sequence is found
-            #[cfg(feature = "simd")]
-            let (s, text) = map_res(take_while(|c| c != b'\x1b'), |t| {
-                simdutf8::basic::from_utf8(t)
-            })(s)?;
-
-            #[cfg(not(feature = "simd"))]
-            let (s, text) = map_res(take_while(|c| c != b'\x1b'), |t| std::str::from_utf8(t))(s)?;
-
-            // if a style was found, patch the last style with it
-            if let Some(st) = maybe_style.flatten() {
-                last_style = last_style.patch(st);
-            }
-
-            Ok((s, Span::styled(text.to_owned(), last_style)))
+        last_style: Style,
+        bytes: &[u8],
+    ) -> IResult<&[u8], Span<'_>, nom::error::Error<&[u8]>> {
+        let (bytes, style) = style(last_style, bytes)?;
+        
+        let style = match style.flatten() {
+            Some(style) => last_style.patch(style),
+            None => last_style,
         }
+            
+        #[cfg(feature = "simd")]
+        let (bytes, text) = map_res(take_while(|c| c != b'\x1b'), |t| {
+            simdutf8::basic::from_utf8(t)
+        })(bytes)?;
+
+        #[cfg(not(feature = "simd"))]
+        let (bytes, text) = map_res(take_while(|c| c != b'\x1b'), |t| std::str::from_utf8(t))(bytes)?;
+
+        Ok((bytes, Span::styled(text, style)))
     }
 
-    #[cfg(feature = "zero-copy")]
-    fn span_fast(
-        last: Style,
-    ) -> impl Fn(&[u8]) -> IResult<&[u8], Span<'_>, nom::error::Error<&[u8]>> {
-        move |s: &[u8]| -> IResult<&[u8], Span<'_>> {
-            let mut last = last;
-            let (s, style) = opt(style(last))(s)?;
-
-            #[cfg(feature = "simd")]
-            let (s, text) = map_res(take_while(|c| c != b'\x1b'), |t| {
-                simdutf8::basic::from_utf8(t)
-            })(s)?;
-
-            #[cfg(not(feature = "simd"))]
-            let (s, text) = map_res(take_while(|c| c != b'\x1b'), |t| std::str::from_utf8(t))(s)?;
-
-            if let Some(style) = style.flatten() {
-                last = last.patch(style);
-            }
-
-            Ok((s, Span::styled(text, last)))
-        }
-    }
 
     fn style(
         style: Style,
-    ) -> impl Fn(&[u8]) -> IResult<&[u8], Option<Style>, nom::error::Error<&[u8]>> {
-        move |s: &[u8]| -> IResult<&[u8], Option<Style>> {
-            let (s, r) = match opt(ansi_sgr_code)(s)? {
-                (s, Some(r)) => {
-                    // This would correspond to an implicit reset code (\x1b[m)
-                    if r.is_empty() {
-                        let mut sv = SmallVec::<[AnsiItem; 2]>::new();
-                        sv.push(AnsiItem {
-                            code: AnsiCode::Reset,
-                            color: None,
-                        });
-                        (s, Some(sv))
-                    } else {
-                        (s, Some(r))
-                    }
+        bytes: &[u8],
+    ) -> IResult<&[u8], Option<Style>, nom::error::Error<&[u8]>> {
+        let (s, r) = match opt(ansi_sgr_code)(bytes)? {
+            (s, Some(r)) => {
+                // This would correspond to an implicit reset code (\x1b[m)
+                if r.is_empty() {
+                    let mut sv = SmallVec::<[AnsiItem; 2]>::new();
+                    sv.push(AnsiItem {
+                        code: AnsiCode::Reset,
+                        color: None,
+                    });
+                    (s, Some(sv))
+                } else {
+                    (s, Some(r))
                 }
-                (s, None) => {
-                    let (s, _) = any_escape_sequence(s)?;
-                    (s, None)
-                }
-            };
-            Ok((s, r.map(|r| Style::from(AnsiStates { style, items: r }))))
-        }
+            }
+            (s, None) => {
+                let (s, _) = any_escape_sequence(s)?;
+                (s, None)
+            }
+        };
+        Ok((s, r.map(|r| Style::from(AnsiStates { style, items: r }))))
     }
 
     /// A complete ANSI SGR code
@@ -318,9 +233,10 @@ pub mod parser {
     }
 
     /// An ANSI SGR attribute
-    fn ansi_sgr_item(s: &[u8]) -> IResult<&[u8], AnsiItem> {
-        let (s, c) = u8(s)?;
+    fn ansi_sgr_item(bytes: &[u8]) -> IResult<&[u8], AnsiItem> {
+        let (s, c) = u8(bytes)?;
         let code = AnsiCode::from(c);
+    
         let (s, color) = match code {
             AnsiCode::SetForegroundColor | AnsiCode::SetBackgroundColor => {
                 let (s, _) = opt(tag(";"))(s)?;
@@ -329,7 +245,9 @@ pub mod parser {
             }
             _ => (s, None),
         };
+    
         let (s, _) = opt(tag(";"))(s)?;
+        
         Ok((s, AnsiItem { code, color }))
     }
 
