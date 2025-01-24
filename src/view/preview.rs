@@ -22,7 +22,7 @@ use crate::colors::{Colorscheme, PreviewColorscheme};
 use crate::strings::{
     replace_non_printable, shrink_with_ellipsis, ReplaceNonPrintableConfig, EMPTY_STRING,
 };
-use crate::{ansi::IntoText, entry::Entry};
+use crate::entry::Entry;
 
 #[allow(dead_code)]
 const FILL_CHAR_SLANTED: char = '╱';
@@ -208,17 +208,17 @@ pub fn build_preview_paragraph(
 }
 
 fn build_ansi_text_paragraph(text: String, preview_block: Block, preview_scroll: u16) -> Paragraph {
-    let text = replace_non_printable(
+    let (text, _) = replace_non_printable(
         text.as_bytes(),
         &ReplaceNonPrintableConfig {
             replace_line_feed: false,
             replace_control_characters: false,
             ..Default::default()
         },
-    )
-    .0
-    .into_text()
-    .unwrap();
+    );
+
+    let (_bytes, text) = crate::ansi::parser::text(text.as_bytes()).unwrap();
+    
     Paragraph::new(text)
         .block(preview_block)
         .scroll((preview_scroll, 0))
