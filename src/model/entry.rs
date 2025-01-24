@@ -5,22 +5,12 @@ use std::{
 
 use devicons::FileIcon;
 
-// NOTE: having an enum for entry types would be nice since it would allow
-// having a nicer implementation for transitions between channels. This would
-// permit implementing `From<EntryType>` for channels which would make the
-// channel convertible from any other that yields `EntryType`.
-// This needs pondering since it does bring another level of abstraction and
-// adds a layer of complexity.
 #[derive(Clone, Debug, Eq)]
 pub struct Entry {
     /// The name of the entry.
     pub name: String,
-    /// An optional value associated with the entry.
-    pub value: Option<String>,
     /// The optional ranges for matching characters in the name.
     pub name_match_ranges: Option<Vec<(u32, u32)>>,
-    /// The optional ranges for matching characters in the value.
-    pub value_match_ranges: Option<Vec<(u32, u32)>>,
     /// The optional icon associated with the entry.
     pub icon: Option<FileIcon>,
     /// The optional line number associated with the entry.
@@ -52,7 +42,6 @@ impl PartialEq<Entry> for Entry {
     }
 }
 
-#[allow(clippy::needless_return)]
 pub fn merge_ranges(ranges: &[(u32, u32)]) -> Vec<(u32, u32)> {
     ranges
         .iter()
@@ -66,7 +55,8 @@ pub fn merge_ranges(ranges: &[(u32, u32)]) -> Vec<(u32, u32)> {
             } else {
                 acc.push(*x);
             }
-            return acc;
+            
+            acc
         })
 }
 
@@ -75,26 +65,14 @@ impl Entry {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            value: None,
             name_match_ranges: None,
-            value_match_ranges: None,
             icon: None,
             line_number: None,
         }
     }
 
-    pub fn with_value(mut self, value: String) -> Self {
-        self.value = Some(value);
-        self
-    }
-
     pub fn with_name_match_ranges(mut self, name_match_ranges: &[(u32, u32)]) -> Self {
         self.name_match_ranges = Some(merge_ranges(name_match_ranges));
-        self
-    }
-
-    pub fn with_value_match_ranges(mut self, value_match_ranges: &[(u32, u32)]) -> Self {
-        self.value_match_ranges = Some(merge_ranges(value_match_ranges));
         self
     }
 
@@ -126,9 +104,7 @@ impl Entry {
 
 pub const ENTRY_PLACEHOLDER: Entry = Entry {
     name: String::new(),
-    value: None,
     name_match_ranges: None,
-    value_match_ranges: None,
     icon: None,
     line_number: None,
 };
