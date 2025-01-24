@@ -217,7 +217,7 @@ fn build_ansi_text_paragraph(text: String, preview_block: Block, preview_scroll:
         },
     );
 
-    let (_bytes, text) = crate::ansi::parser::text(text.as_bytes()).unwrap();
+    let text = crate::ansi::parser::text(text.as_bytes()).unwrap();
     
     Paragraph::new(text)
         .block(preview_block)
