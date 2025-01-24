@@ -92,20 +92,20 @@ pub mod parser {
         }
     }
 
-    pub(crate) fn text(mut bytes: &[u8]) -> (&[u8], Text<'_>) {
+    pub(crate) fn text(mut bytes: &[u8]) -> Text<'_> {
         let mut lines = Vec::new();
         let mut last_style = Style::new();
         
         while let Ok((remaining_bytes, (line, style))) = line(last_style, bytes) {
             lines.push(line);
             last_style = style;
-            bytes = remaining_bytes;
+            
             if remaining_bytes.is_empty() {
                 break;
             }
         }
         
-        (bytes, Text::from(lines))
+        Text::from(lines)
     }
 
     fn line(style: Style, bytes: &[u8]) -> IResult<&[u8], (Line<'_>, Style)> {
