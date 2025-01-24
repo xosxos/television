@@ -2,25 +2,6 @@
 //! This module provides a way to parse ansi escape codes and convert them to ratatui objects.
 //!
 //! This code is a modified version of [ansi_to_tui](https://github.com/ratatui/ansi-to-tui).
-
-use ratatui::style::Color;
-use ratatui::text::Text;
-
-/// `IntoText` will convert any type that has a `AsRef<[u8]>` to a Text.
-pub trait IntoText {
-    fn to_text(&self) -> Result<Text<'_>, Error>;
-}
-
-impl<T> IntoText for T
-where
-    T: AsRef<[u8]>,
-{
-    fn to_text(&self) -> Result<Text<'_>, Error> {
-        let (_bytes, text) = crate::ansi::parser::text(self.as_ref());
-        Ok(text)
-    }
-}
-
 pub mod parser {
     use crate::ansi::AnsiCode;
     use nom::{
