@@ -410,7 +410,6 @@ pub enum AnsiCode {
     UnderlineOff,
     /// Turn off blinking
     BlinkOff,
-    // 26 ?
     /// Don't invert colors
     InvertOff,
     /// Reveal text
@@ -455,7 +454,7 @@ impl From<u8> for AnsiCode {
             23 => AnsiCode::NotItalic,
             24 => AnsiCode::UnderlineOff,
             25 => AnsiCode::BlinkOff,
-            // 26 ?
+            // 26, Proportional spacing, not known to be used in terminals
             27 => AnsiCode::InvertOff,
             28 => AnsiCode::Reveal,
             29 => AnsiCode::CrossedOutOff,
