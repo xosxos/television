@@ -40,7 +40,7 @@ pub mod parser {
         style::{Color, Modifier, Style, Stylize},
         text::{Line, Span, Text},
     };
-    use smallvec::{SmallVec, ToSmallVec};
+    use smallvec::{SmallVec, ToSmallVec, smallvec};
     use std::str::FromStr;
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -113,11 +113,11 @@ pub mod parser {
 
     pub(crate) fn text(mut bytes: &[u8]) -> (&[u8], Text<'_>) {
         let mut lines = Vec::new();
-        let mut last = Style::new();
+        let mut last_style = Style::new();
         
-        while let Ok((remaining_bytes, (line, style))) = line(last, bytes) {
+        while let Ok((remaining_bytes, (line, style))) = line(last_style, bytes) {
             lines.push(line);
-            last = style;
+            last_style = style;
             bytes = remaining_bytes;
             if remaining_bytes.is_empty() {
                 break;
@@ -131,10 +131,11 @@ pub mod parser {
         let (bytes, mut span_bytes) = not_line_ending(bytes)?;
         let (bytes, _) = opt(alt((tag("\r\n"), tag("\n"))))(bytes)?;
         let mut spans = Vec::new();
-        let mut last = style;
+        let mut last_style = style;
             
-        while let Ok((remaining_bytes, span)) = span(last, span_bytes) {
-            last = last.patch(span.style);
+        while let Ok((remaining_bytes, span)) = span(last_style, span_bytes) {
+            last_style = last_style.patch(span.style);
+            
             // If the spans is empty then it might be possible that the style changes
             // but there is no text change
             if !span.content.is_empty() {
@@ -171,47 +172,82 @@ pub mod parser {
         Ok((bytes, Span::styled(text, style)))
     }
 
-
     fn style(
         style: Style,
         bytes: &[u8],
     ) -> IResult<&[u8], Option<Style>, nom::error::Error<&[u8]>> {
-        let (s, r) = match opt(ansi_sgr_code)(bytes)? {
-            (s, Some(r)) => {
-                // This would correspond to an implicit reset code (\x1b[m)
-                if r.is_empty() {
-                    let mut sv = SmallVec::<[AnsiItem; 2]>::new();
-                    sv.push(AnsiItem {
-                        code: AnsiCode::Reset,
-                        color: None,
-                    });
-                    (s, Some(sv))
-                } else {
-                    (s, Some(r))
-                }
-            }
-            (s, None) => {
-                let (s, _) = any_escape_sequence(s)?;
-                (s, None)
-            }
-        };
-        Ok((s, r.map(|r| Style::from(AnsiStates { style, items: r }))))
-    }
-
-    /// A complete ANSI SGR code
-    fn ansi_sgr_code(
-        s: &[u8],
-    ) -> IResult<&[u8], smallvec::SmallVec<[AnsiItem; 2]>, nom::error::Error<&[u8]>> {
-        delimited(
+        let (bytes, ansi_items) = opt(delimited(
             tag("\x1b["),
-            fold_many0(ansi_sgr_item, smallvec::SmallVec::new, |mut items, item| {
+            fold_many0(parse_ansi_sgr_item, SmallVec::new, |mut items, item| {
                 items.push(item);
                 items
             }),
             char('m'),
-        )(s)
+        ))(bytes)?;
+
+        let (bytes, ansi_items) = match ansi_items {
+            Some(items) => {
+                // This would correspond to an implicit reset code (\x1b[m)
+                let items = match items.is_empty() {
+                    true => smallvec![AnsiItem { code: AnsiCode::Reset, color: None }; 2],
+                    false => items,
+                };
+                
+                (bytes, Some(items))
+            }
+            None => (any_escape_sequence(bytes)?.0, None),
+        };
+        
+        Ok((bytes, ansi_items.map(|items| Style::from(AnsiStates { style, items }))))
     }
 
+    /// Parse ANSI Select Graphic Rendition (SGR) attributes
+    fn parse_ansi_sgr_item(bytes: &[u8]) -> IResult<&[u8], AnsiItem> {
+        let (bytes, code) = u8(bytes)?;
+        let code = AnsiCode::from(code);
+    
+        let (bytes, color) = match code {
+            AnsiCode::SetForegroundColor | AnsiCode::SetBackgroundColor => {
+                let (bytes, _) = opt(tag(";"))(bytes)?;
+                let (bytes, color) = color(bytes)?;
+                (bytes, Some(color))
+            }
+            _ => (bytes, None),
+        };
+    
+        let (bytes, _) = opt(tag(";"))(bytes)?;
+        
+        Ok((bytes, AnsiItem { code, color }))
+    }
+
+    fn color(bytes: &[u8]) -> IResult<&[u8], Color> {      
+        let (bytes, type_id) = i64(bytes)?;
+        // NOTE: This isn't opt because a color type must always be followed by a color
+        let (bytes, _) = tag(";")(bytes)?;
+    
+        let (bytes, color_type) = match type_id {
+            2 => Ok((bytes, ColorType::TrueColor)),
+            5 => Ok((bytes, ColorType::EightBit)),
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                bytes,
+                nom::error::ErrorKind::Alt,
+            ))),
+        };
+    
+        let (bytes, _) = opt(tag(";"))(bytes)?;
+    
+        match color_type {
+            ColorType::TrueColor => {
+                let (bytes, (r, _, g, _, b)) = tuple((u8, tag(";"), u8, tag(";"), u8))(bytes)?;
+                Ok((bytes, Color::Rgb(r, g, b)))
+            }
+            ColorType::EightBit => {
+                let (bytes, index) = u8(bytes)?;
+                Ok((bytes, Color::Indexed(index)))
+            }
+        }
+    }
+    
     fn any_escape_sequence(s: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
         // Attempt to consume most escape codes, including a single escape char.
         //
@@ -229,57 +265,10 @@ pub mod parser {
                 delimited(char(']'), take_till(|c| c == b'\x07'), opt(take(1u8))),
             ))),
         )(s)?;
+        
         Ok((input, garbage))
     }
 
-    /// An ANSI SGR attribute
-    fn ansi_sgr_item(bytes: &[u8]) -> IResult<&[u8], AnsiItem> {
-        let (s, c) = u8(bytes)?;
-        let code = AnsiCode::from(c);
-    
-        let (s, color) = match code {
-            AnsiCode::SetForegroundColor | AnsiCode::SetBackgroundColor => {
-                let (s, _) = opt(tag(";"))(s)?;
-                let (s, color) = color(s)?;
-                (s, Some(color))
-            }
-            _ => (s, None),
-        };
-    
-        let (s, _) = opt(tag(";"))(s)?;
-        
-        Ok((s, AnsiItem { code, color }))
-    }
-
-    fn color(s: &[u8]) -> IResult<&[u8], Color> {
-        let (s, c_type) = color_type(s)?;
-        let (s, _) = opt(tag(";"))(s)?;
-        match c_type {
-            ColorType::TrueColor => {
-                let (s, (r, _, g, _, b)) = tuple((u8, tag(";"), u8, tag(";"), u8))(s)?;
-                Ok((s, Color::Rgb(r, g, b)))
-            }
-            ColorType::EightBit => {
-                let (s, index) = u8(s)?;
-                Ok((s, Color::Indexed(index)))
-            }
-        }
-    }
-
-    fn color_type(s: &[u8]) -> IResult<&[u8], ColorType> {
-        let (s, t) = i64(s)?;
-        // NOTE: This isn't opt because a color type must always be followed by a color
-        // let (s, _) = opt(tag(";"))(s)?;
-        let (s, _) = tag(";")(s)?;
-        match t {
-            2 => Ok((s, ColorType::TrueColor)),
-            5 => Ok((s, ColorType::EightBit)),
-            _ => Err(nom::Err::Error(nom::error::Error::new(
-                s,
-                nom::error::ErrorKind::Alt,
-            ))),
-        }
-    }
 
     #[test]
     fn color_test() {
