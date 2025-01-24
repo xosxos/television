@@ -162,39 +162,6 @@ where
             ));
         }
 
-        // optional preview
-        if let Some(preview) = &entry.value {
-            spans.push(Span::raw(": "));
-
-            let (preview, preview_match_ranges) =
-                make_matched_string_printable(preview, entry.value_match_ranges.as_deref());
-
-            let mut last_match_end = 0;
-
-            for (start, end) in preview_match_ranges
-                .iter()
-                .map(|(s, e)| (*s as usize, *e as usize))
-            {
-                spans.push(Span::styled(
-                    slice_at_char_boundaries(&preview, last_match_end, start).to_string(),
-                    Style::default().fg(colorscheme.result_preview_fg),
-                ));
-                spans.push(Span::styled(
-                    slice_at_char_boundaries(&preview, start, end).to_string(),
-                    Style::default().fg(colorscheme.match_foreground_color),
-                ));
-                last_match_end = end;
-            }
-
-            let next_boundary = next_char_boundary(&preview, last_match_end);
-
-            if next_boundary < preview.len() {
-                spans.push(Span::styled(
-                    preview[next_boundary..].to_string(),
-                    Style::default().fg(colorscheme.result_preview_fg),
-                ));
-            }
-        }
         Line::from(spans)
     }))
     .direction(list_direction)
@@ -327,10 +294,9 @@ pub fn draw_input(
     let result_count_paragraph = Paragraph::new(Span::styled(
         format!(
             " {} / {} ",
-            if results_count == 0 {
-                0
-            } else {
-                results_picker_state.selected().unwrap_or(0) + 1
+            match results_count == 0 {
+                true => 0,
+                false => results_picker_state.selected().unwrap_or(0) + 1,
             },
             results_count,
         ),
