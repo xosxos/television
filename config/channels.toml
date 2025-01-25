@@ -106,12 +106,23 @@ preview = [
 name = "git-log"
 source = "git log --oneline --date=short --pretty=\"format:%h %s %an %cd\" \"$@\""
 preview = [
-  "git show -p --stat --pretty=fuller --color=always {0}",
+  "git show {0} --stat --color=always",
+  "git diff {0}^ {0} --color=always",
+  ]
+transition = [
+  { command = "git diff {0}^ {0} --color=always --name-only", channel = "files" },
 ]
 
 [[channel]]
 name = "git-branch"
 source = "git --no-pager branch --all --format=\"%(refname:short)\""
+preview = [
+  "git show -p --stat --pretty=fuller --color=always {0}",
+]
+
+[[channel]]
+name = "git-status"
+source = "echo $(git diff --name-only --diff-filter=AM | sed 's/^/modified: /g') $(git diff --name-only --cached --diff-filter=AM | sed 's/^/staged: /g') | sed 's/modified: /\nmodified: /g' | sed 's/staged: /\nstaged: /g' | sed '/^$/d'"
 preview = [
   "git show -p --stat --pretty=fuller --color=always {0}",
 ]
