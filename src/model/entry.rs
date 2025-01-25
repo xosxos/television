@@ -5,6 +5,10 @@ use std::{
 
 use devicons::FileIcon;
 
+#[cfg(test)]
+#[path = "../../unit_tests/test_entry.rs"]
+mod tests;
+
 // NOTE: having an enum for entry types would be nice since it would allow
 // having a nicer implementation for transitions between channels. This would
 // permit implementing `From<EntryType>` for channels which would make the
@@ -132,32 +136,3 @@ pub const ENTRY_PLACEHOLDER: Entry = Entry {
     icon: None,
     line_number: None,
 };
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_input() {
-        let ranges: Vec<(u32, u32)> = vec![];
-        assert_eq!(merge_ranges(&ranges), Vec::<(u32, u32)>::new());
-    }
-
-    #[test]
-    fn test_single_range() {
-        let ranges = vec![(1, 3)];
-        assert_eq!(merge_ranges(&ranges), vec![(1, 3)]);
-    }
-
-    #[test]
-    fn test_contiguous_ranges() {
-        let ranges = vec![(1, 2), (2, 3), (3, 4), (4, 5)];
-        assert_eq!(merge_ranges(&ranges), vec![(1, 5)]);
-    }
-
-    #[test]
-    fn test_non_contiguous_ranges() {
-        let ranges = vec![(1, 2), (3, 4), (5, 6)];
-        assert_eq!(merge_ranges(&ranges), vec![(1, 2), (3, 4), (5, 6)]);
-    }
-}
