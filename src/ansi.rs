@@ -2,6 +2,8 @@
 //! This module provides a way to parse ansi escape codes and convert them to ratatui objects.
 //!
 //! This code is a modified version of [ansi_to_tui](https://github.com/ratatui/ansi-to-tui).
+
+use ratatui::style::Color;
 pub mod parser {
     use crate::ansi::AnsiCode;
     use nom::{
@@ -21,8 +23,8 @@ pub mod parser {
         style::{Color, Modifier, Style, Stylize},
         text::{Line, Span, Text},
     };
-    use smallvec::{SmallVec, ToSmallVec, smallvec};
-    use std::str::FromStr;
+    use smallvec::{smallvec, SmallVec, ToSmallVec};
+    use std::{borrow::Cow, str::FromStr};
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
     enum ColorType {
@@ -92,65 +94,66 @@ pub mod parser {
         }
     }
 
-    pub(crate) fn text(mut bytes: &[u8]) -> Text<'_> {
+    pub(crate) fn text(bytes: &[u8]) -> Text<'static> {
         let mut lines = Vec::new();
         let mut last_style = Style::new();
-        
+
         while let Ok((remaining_bytes, (line, style))) = line(last_style, bytes) {
             lines.push(line);
             last_style = style;
-            
+
             if remaining_bytes.is_empty() {
                 break;
             }
         }
-        
+
         Text::from(lines)
     }
 
-    fn line(style: Style, bytes: &[u8]) -> IResult<&[u8], (Line<'_>, Style)> {
-        let (bytes, mut span_bytes) = not_line_ending(bytes)?;
+    fn line(style: Style, bytes: &[u8]) -> IResult<&[u8], (Line<'static>, Style)> {
+        let (bytes, span_bytes) = not_line_ending(bytes)?;
         let (bytes, _) = opt(alt((tag("\r\n"), tag("\n"))))(bytes)?;
         let mut spans = Vec::new();
         let mut last_style = style;
-            
+
         while let Ok((remaining_bytes, span)) = span(last_style, span_bytes) {
             last_style = last_style.patch(span.style);
-            
+
             // If the spans is empty then it might be possible that the style changes
             // but there is no text change
             if !span.content.is_empty() {
                 spans.push(span);
             }
-            
-            remaining_bytes.is_empty() {
-                break,
+
+            if remaining_bytes.is_empty() {
+                break;
             }
         }
 
-        Ok((bytes, (Line::from(spans), last)))
+        Ok((bytes, (Line::from(spans), last_style)))
     }
 
     fn span(
         last_style: Style,
         bytes: &[u8],
-    ) -> IResult<&[u8], Span<'_>, nom::error::Error<&[u8]>> {
+    ) -> IResult<&[u8], Span<'static>, nom::error::Error<&[u8]>> {
         let (bytes, style) = style(last_style, bytes)?;
-        
-        let style = match style.flatten() {
+
+        let style = match style {
             Some(style) => last_style.patch(style),
             None => last_style,
-        }
-            
+        };
+
         #[cfg(feature = "simd")]
         let (bytes, text) = map_res(take_while(|c| c != b'\x1b'), |t| {
             simdutf8::basic::from_utf8(t)
         })(bytes)?;
 
         #[cfg(not(feature = "simd"))]
-        let (bytes, text) = map_res(take_while(|c| c != b'\x1b'), |t| std::str::from_utf8(t))(bytes)?;
+        let (bytes, text) =
+            map_res(take_while(|c| c != b'\x1b'), |t| std::str::from_utf8(t))(bytes)?;
 
-        Ok((bytes, Span::styled(text, style)))
+        Ok((bytes, Span::styled(text.to_owned(), style)))
     }
 
     fn style(
@@ -173,20 +176,23 @@ pub mod parser {
                     true => smallvec![AnsiItem { code: AnsiCode::Reset, color: None }; 2],
                     false => items,
                 };
-                
+
                 (bytes, Some(items))
             }
             None => (any_escape_sequence(bytes)?.0, None),
         };
-        
-        Ok((bytes, ansi_items.map(|items| Style::from(AnsiStates { style, items }))))
+
+        Ok((
+            bytes,
+            ansi_items.map(|items| Style::from(AnsiStates { items, style })),
+        ))
     }
 
     /// Parse ANSI Select Graphic Rendition (SGR) attributes
     fn parse_ansi_sgr_item(bytes: &[u8]) -> IResult<&[u8], AnsiItem> {
         let (bytes, code) = u8(bytes)?;
         let code = AnsiCode::from(code);
-    
+
         let (bytes, color) = match code {
             AnsiCode::SetForegroundColor | AnsiCode::SetBackgroundColor => {
                 let (bytes, _) = opt(tag(";"))(bytes)?;
@@ -195,17 +201,18 @@ pub mod parser {
             }
             _ => (bytes, None),
         };
-    
+
         let (bytes, _) = opt(tag(";"))(bytes)?;
-        
+
         Ok((bytes, AnsiItem { code, color }))
     }
 
-    fn color(bytes: &[u8]) -> IResult<&[u8], Color> {      
+    fn color(bytes: &[u8]) -> IResult<&[u8], Color> {
         let (bytes, type_id) = i64(bytes)?;
+
         // NOTE: This isn't opt because a color type must always be followed by a color
         let (bytes, _) = tag(";")(bytes)?;
-    
+
         let (bytes, color_type) = match type_id {
             2 => Ok((bytes, ColorType::TrueColor)),
             5 => Ok((bytes, ColorType::EightBit)),
@@ -213,10 +220,10 @@ pub mod parser {
                 bytes,
                 nom::error::ErrorKind::Alt,
             ))),
-        };
-    
+        }?;
+
         let (bytes, _) = opt(tag(";"))(bytes)?;
-    
+
         match color_type {
             ColorType::TrueColor => {
                 let (bytes, (r, _, g, _, b)) = tuple((u8, tag(";"), u8, tag(";"), u8))(bytes)?;
@@ -228,7 +235,7 @@ pub mod parser {
             }
         }
     }
-    
+
     fn any_escape_sequence(s: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
         // Attempt to consume most escape codes, including a single escape char.
         //
@@ -246,10 +253,9 @@ pub mod parser {
                 delimited(char(']'), take_till(|c| c == b'\x07'), opt(take(1u8))),
             ))),
         )(s)?;
-        
+
         Ok((input, garbage))
     }
-
 
     #[test]
     fn color_test() {
@@ -263,11 +269,8 @@ pub mod parser {
 
     #[test]
     fn test_color_reset() {
-        let t = text(b"\x1b[33msome arbitrary text\x1b[0m\nmore text")
-            .unwrap()
-            .1;
         assert_eq!(
-            t,
+            text(b"\x1b[33msome arbitrary text\x1b[0m\nmore text"),
             Text::from(vec![
                 Line::from(vec![Span::styled(
                     "some arbitrary text",
@@ -280,11 +283,8 @@ pub mod parser {
 
     #[test]
     fn test_color_reset_implicit_escape() {
-        let t = text(b"\x1b[33msome arbitrary text\x1b[m\nmore text")
-            .unwrap()
-            .1;
         assert_eq!(
-            t,
+            text(b"\x1b[33msome arbitrary text\x1b[m\nmore text"),
             Text::from(vec![
                 Line::from(vec![Span::styled(
                     "some arbitrary text",
@@ -298,7 +298,7 @@ pub mod parser {
     #[test]
     fn ansi_items_test() {
         let sc = Style::default();
-        let t = style(sc)(b"\x1b[38;2;3;3;3m").unwrap().1.unwrap();
+        let t = style(sc, b"\x1b[38;2;3;3;3m").unwrap().1.unwrap();
         assert_eq!(
             t,
             Style::from(AnsiStates {
@@ -310,8 +310,9 @@ pub mod parser {
                 .into()
             })
         );
+
         assert_eq!(
-            style(sc)(b"\x1b[38;5;3m").unwrap().1.unwrap(),
+            style(sc, b"\x1b[38;5;3m").unwrap().1.unwrap(),
             Style::from(AnsiStates {
                 style: sc,
                 items: vec![AnsiItem {
@@ -322,7 +323,7 @@ pub mod parser {
             })
         );
         assert_eq!(
-            style(sc)(b"\x1b[38;5;3;48;5;3m").unwrap().1.unwrap(),
+            style(sc, b"\x1b[38;5;3;48;5;3m").unwrap().1.unwrap(),
             Style::from(AnsiStates {
                 style: sc,
                 items: vec![
@@ -339,7 +340,7 @@ pub mod parser {
             })
         );
         assert_eq!(
-            style(sc)(b"\x1b[38;5;3;48;5;3;1m").unwrap().1.unwrap(),
+            style(sc, b"\x1b[38;5;3;48;5;3;1m").unwrap().1.unwrap(),
             Style::from(AnsiStates {
                 style: sc,
                 items: vec![

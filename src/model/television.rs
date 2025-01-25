@@ -657,6 +657,7 @@ impl Television {
                 &self.colorscheme,
             )?;
         }
+        println!("foo");
 
         Ok(())
     }

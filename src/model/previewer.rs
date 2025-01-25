@@ -3,7 +3,6 @@ use std::sync::{Arc, LazyLock};
 use devicons::FileIcon;
 
 // previewer types
-use syntect::highlighting::Style;
 use std::sync::atomic::{AtomicU8, Ordering};
 use rustc_hash::FxHashSet as HashSet;
 
@@ -21,11 +20,8 @@ use crate::previewer::cache::PreviewCache;
 pub enum PreviewContent {
     Empty,
     FileTooLarge,
-    SyntectHighlightedText(Vec<Vec<(Style, String)>>),
     Loading,
     NotSupported,
-    PlainText(Vec<String>),
-    PlainTextWrapped(String),
     AnsiText(String),
 }
 
@@ -79,10 +75,6 @@ impl Preview {
 
     pub fn total_lines(&self) -> u16 {
         match &self.content {
-            PreviewContent::SyntectHighlightedText(lines) => {
-                lines.len().try_into().unwrap_or(u16::MAX)
-            }
-            PreviewContent::PlainText(lines) => lines.len().try_into().unwrap_or(u16::MAX),
             PreviewContent::AnsiText(text) => text.lines().count().try_into().unwrap_or(u16::MAX),
             _ => 0,
         }
